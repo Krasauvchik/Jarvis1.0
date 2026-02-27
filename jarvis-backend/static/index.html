@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jarvis — Календарь и Почта</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 24px;
+      background: #0f0f12;
+      color: #e4e4e7;
+      min-height: 100vh;
+    }
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin: 0 0 8px 0;
+      color: #fff;
+    }
+    .subtitle {
+      color: #71717a;
+      font-size: 0.9rem;
+      margin-bottom: 24px;
+    }
+    .auth-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 32px;
+      padding: 12px 16px;
+      background: #18181b;
+      border-radius: 12px;
+      border: 1px solid #27272a;
+    }
+    .auth-bar .status {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #22c55e;
+    }
+    .auth-bar .status.off { background: #ef4444; }
+    .auth-bar a {
+      color: #3b82f6;
+      text-decoration: none;
+      font-size: 0.9rem;
+    }
+    .auth-bar a:hover { text-decoration: underline; }
+    section {
+      margin-bottom: 32px;
+    }
+    section h2 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin: 0 0 12px 0;
+      color: #a1a1aa;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card {
+      background: #18181b;
+      border: 1px solid #27272a;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+    .card:hover {
+      border-color: #3f3f46;
+      background: #1c1c1f;
+    }
+    .card-title {
+      font-weight: 600;
+      margin: 0 0 4px 0;
+      color: #fff;
+    }
+    .card-date, .card-meta {
+      font-size: 0.85rem;
+      color: #71717a;
+      margin: 0;
+    }
+    .card-notes {
+      font-size: 0.9rem;
+      color: #a1a1aa;
+      margin: 8px 0 0 0;
+      line-height: 1.4;
+    }
+    .mail-snippet {
+      font-size: 0.85rem;
+      color: #a1a1aa;
+      margin-top: 6px;
+      line-height: 1.4;
+    }
+    .loading {
+      color: #71717a;
+      padding: 24px;
+      text-align: center;
+    }
+    .error {
+      color: #ef4444;
+      padding: 16px;
+      background: rgba(239,68,68,0.1);
+      border-radius: 8px;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Jarvis</h1>
+  <p class="subtitle">Календарь и почта — предпросмотр</p>
+
+  <div class="auth-bar">
+    <span class="status" id="statusDot"></span>
+    <span id="authStatus">Проверка...</span>
+    <span style="margin-left: auto;" id="authLinks"></span>
+  </div>
+
+  <section>
+    <h2>📅 Календарь</h2>
+    <div id="calendar"></div>
+  </section>
+
+  <section>
+    <h2>✉️ Почта</h2>
+    <div id="mail"></div>
+  </section>
+
+  <script>
+    const API = 'http://jarvis-app.mooo.com:8000';
+
+    async function checkAuth() {
+      try {
+        const r = await fetch(API + '/auth/status');
+        const data = await r.json();
+        document.getElementById('statusDot').className = 'status' + (data.authorized ? '' : ' off');
+        document.getElementById('authStatus').textContent = data.authorized
+          ? 'Подключено к Google'
+          : 'Не авторизован';
+        document.getElementById('authLinks').innerHTML = data.authorized
+          ? ''
+          : '<a href="' + API + '/auth/google">Войти через Google</a>';
+        return data.authorized;
+      } catch (e) {
+        document.getElementById('statusDot').className = 'status off';
+        document.getElementById('authStatus').textContent = 'Ошибка подключения к API';
+        document.getElementById('authLinks').innerHTML = '';
+        return false;
+      }
+    }
+
+    async function loadCalendar() {
+      const el = document.getElementById('calendar');
+      el.innerHTML = '<p class="loading">Загрузка...</p>';
+      try {
+        const r = await fetch(API + '/calendar/events');
+        const events = await r.json();
+        el.innerHTML = events.length === 0
+          ? '<p class="loading">Нет событий</p>'
+          : events.map(e => `
+            <div class="card">
+              <p class="card-title">${escapeHtml(e.title)}</p>
+              <p class="card-date">${formatDate(e.startDate)}</p>
+              ${e.notes ? '<p class="card-notes">' + escapeHtml(e.notes.replace(/<[^>]+>/g, ' ').slice(0, 150)) + '</p>' : ''}
+            </div>
+          `).join('');
+      } catch (e) {
+        el.innerHTML = '<p class="error">Не удалось загрузить календарь</p>';
+      }
+    }
+
+    async function loadMail() {
+      const el = document.getElementById('mail');
+      el.innerHTML = '<p class="loading">Загрузка...</p>';
+      try {
+        const r = await fetch(API + '/mail/messages?max_results=10');
+        const data = await r.json();
+        if (data.error) {
+          el.innerHTML = '<p class="error">' + (data.message || 'Требуется авторизация') + '</p>';
+          return;
+        }
+        el.innerHTML = data.length === 0
+          ? '<p class="loading">Нет писем</p>'
+          : data.map(m => `
+            <div class="card">
+              <p class="card-title">${escapeHtml(m.subject)}</p>
+              <p class="card-meta">${escapeHtml(m.from)} · ${escapeHtml(m.date)}</p>
+              <p class="mail-snippet">${escapeHtml(m.snippet)}</p>
+            </div>
+          `).join('');
+      } catch (e) {
+        el.innerHTML = '<p class="error">Не удалось загрузить почту</p>';
+      }
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s || '';
+      return d.innerHTML;
+    }
+
+    function formatDate(s) {
+      if (!s) return '';
+      const d = new Date(s);
+      return d.toLocaleString('ru-RU', {
+        weekday: 'short', day: 'numeric', month: 'short',
+        hour: '2-digit', minute: '2-digit'
+      });
+    }
+
+    (async () => {
+      const auth = await checkAuth();
+      if (auth) {
+        loadCalendar();
+        loadMail();
+      } else {
+        document.getElementById('calendar').innerHTML = '<p class="loading">Авторизуйтесь для просмотра календаря</p>';
+        document.getElementById('mail').innerHTML = '<p class="loading">Авторизуйтесь для просмотра почты</p>';
+      }
+    })();
+  </script>
+</body>
+</html>
