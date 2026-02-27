@@ -29,3 +29,9 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 Backend развёрнут на `http://jarvis-app.mooo.com:8000`.  
 Домен `jarvis-app.mooo.com` указывает на сервер с backend.
+
+## Обновление на GitHub
+
+```bash
+git add -A && git commit -m "описание" && git push origin main
+```

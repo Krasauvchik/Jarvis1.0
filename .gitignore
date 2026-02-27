@@ -20,8 +20,15 @@ build/
 DerivedData/
 *.xcuserstate
 *.xcworkspace/xcuserdata/
+**/xcuserdata/
+**/.swift
 
 # IDE
 .idea/
 *.swp
 *~
+
+# Сторонние скрипты (не часть Jarvis)
+analyze_nomenclature.py
+compare_dt300.py
+pivot_deals.py
