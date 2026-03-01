@@ -1,0 +1,40 @@
+---
+description: При добавлении нового UI в Jarvis всегда добавлять анимации (animateOnAppear, bounceOnTap, transitions, withAnimation)
+globs: Jarvis/**/*.swift
+alwaysApply: false
+---
+
+# UI-анимации в Jarvis
+
+При добавлении или изменении экранов и компонентов в приложении Jarvis **всегда** применяй анимации, чтобы интерфейс оставался единообразным и живым.
+
+## Обязательные практики
+
+1. **Списки и карточки**
+   - Для строк в списках: `.animateOnAppear(delay: Double(index) * 0.04)` или `0.05` с небольшим сдвигом по индексу.
+   - Для появления списка целиком: `.transition(.cardAppear)` при добавлении/удалении элементов.
+   - Секции экрана: `.animateOnAppear(delay: 0)`, `0.06`, `0.12` и т.д. для каскадного появления.
+
+2. **Кнопки**
+   - У каждой интерактивной кнопки добавлять `.bounceOnTap()` (модификатор из `AnimationExtensions.swift`).
+   - При смене выбора/состояния оборачивать изменение в `withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { ... }`.
+
+3. **Смена контента**
+   - При переключении разделов/табов: `withAnimation(.spring(...)) { selectedSection = section }` и по необходимости `.animation(.spring(response: 0.3, dampingFraction: 0.8), value: isSelected)` на контейнер.
+
+4. **Пустые состояния и экраны ошибок**
+   - Блоки «Нет данных», «Войти», «Ошибка»: `.animateOnAppear(delay: 0.1)` или `0`.
+
+## Где определено
+
+- Модификаторы: `AnimationExtensions.swift` — `animateOnAppear(delay:)`, `bounceOnTap()`, `slideIn(from:delay:)`, `pulse(isActive:)`, `shake(trigger:)`.
+- Переходы: `AnyTransition.slideAndFade`, `scaleAndFade`, `cardAppear`.
+
+## Checklist при добавлении нового функционала
+
+- [ ] Список/карточки: добавлены `animateOnAppear` и при необходимости `transition(.cardAppear)`.
+- [ ] Все кнопки: добавлен `bounceOnTap()`.
+- [ ] Изменение состояния (выбор, табы): обёрнуто в `withAnimation` и/или `.animation(..., value: ...)`.
+- [ ] Новые секции/экраны: есть анимация появления (хотя бы на корневом контейнере).
+
+Так мы не теряем анимации при добавлении новых фич.
