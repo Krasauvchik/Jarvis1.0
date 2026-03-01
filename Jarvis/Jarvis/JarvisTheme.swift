@@ -1,5 +1,10 @@
 import SwiftUI
 import Combine
+#if os(macOS)
+import AppKit
+#elseif !os(watchOS)
+import UIKit
+#endif
 
 // MARK: - Theme Mode
 
@@ -172,22 +177,40 @@ struct JarvisTheme {
         JarvisTheme(isDark: colorScheme == .dark)
     }
     
-    // MARK: - Static Properties (for backward compatibility, uses dark theme)
-    static var background: Color { JarvisTheme(isDark: true).background }
-    static var cardBackground: Color { JarvisTheme(isDark: true).cardBackground }
-    static var sidebarBackground: Color { JarvisTheme(isDark: true).sidebarBackground }
-    static var inboxBackground: Color { JarvisTheme(isDark: true).inboxBackground }
-    static var textPrimary: Color { JarvisTheme(isDark: true).textPrimary }
-    static var textSecondary: Color { JarvisTheme(isDark: true).textSecondary }
-    static var textTertiary: Color { JarvisTheme(isDark: true).textTertiary }
-    static var textMuted: Color { JarvisTheme(isDark: true).textMuted }
-    static var divider: Color { JarvisTheme(isDark: true).divider }
-    static var hourText: Color { JarvisTheme(isDark: true).hourText }
-    static var hourLine: Color { JarvisTheme(isDark: true).hourLine }
-    static var chipBackground: Color { JarvisTheme(isDark: true).chipBackground }
-    static var cardShadow: Color { JarvisTheme(isDark: true).cardShadow }
-    static var timelineLine: Color { JarvisTheme(isDark: true).timelineLine }
-    static var nowLine: Color { JarvisTheme(isDark: true).nowLine }
+    /// Resolves current isDark from ThemeManager + system appearance.
+    /// Used by static properties so they respect light/dark mode.
+    private static var resolvedIsDark: Bool {
+        let mode = ThemeManager.shared.currentTheme
+        switch mode {
+        case .dark: return true
+        case .light: return false
+        case .system:
+            #if os(macOS)
+            return NSApplication.shared.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            #elseif os(watchOS)
+            return true // watchOS is always dark
+            #else
+            return UITraitCollection.current.userInterfaceStyle == .dark
+            #endif
+        }
+    }
+    
+    // MARK: - Static Properties (adaptive — respects current theme mode)
+    static var background: Color { JarvisTheme(isDark: resolvedIsDark).background }
+    static var cardBackground: Color { JarvisTheme(isDark: resolvedIsDark).cardBackground }
+    static var sidebarBackground: Color { JarvisTheme(isDark: resolvedIsDark).sidebarBackground }
+    static var inboxBackground: Color { JarvisTheme(isDark: resolvedIsDark).inboxBackground }
+    static var textPrimary: Color { JarvisTheme(isDark: resolvedIsDark).textPrimary }
+    static var textSecondary: Color { JarvisTheme(isDark: resolvedIsDark).textSecondary }
+    static var textTertiary: Color { JarvisTheme(isDark: resolvedIsDark).textTertiary }
+    static var textMuted: Color { JarvisTheme(isDark: resolvedIsDark).textMuted }
+    static var divider: Color { JarvisTheme(isDark: resolvedIsDark).divider }
+    static var hourText: Color { JarvisTheme(isDark: resolvedIsDark).hourText }
+    static var hourLine: Color { JarvisTheme(isDark: resolvedIsDark).hourLine }
+    static var chipBackground: Color { JarvisTheme(isDark: resolvedIsDark).chipBackground }
+    static var cardShadow: Color { JarvisTheme(isDark: resolvedIsDark).cardShadow }
+    static var timelineLine: Color { JarvisTheme(isDark: resolvedIsDark).timelineLine }
+    static var nowLine: Color { JarvisTheme(isDark: resolvedIsDark).nowLine }
     static var floatingButtonShadow: Color { JarvisTheme.accent.opacity(0.4) }
     static var timelineDot: Color { Color(white: 0.3) }
 }

@@ -36,12 +36,19 @@ final class NotificationManager: NSObject, ObservableObject {
             content.title = task.title
             content.body = task.notes.isEmpty ? "Напоминание" : task.notes
             content.sound = .default
+            content.userInfo = ["taskID": task.id.uuidString]
             
-            let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: task.date)
+            // Schedule notification 15 minutes before task time
+            let reminderDate = task.date.addingTimeInterval(-15 * 60)
+            let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: reminderDate)
             let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
             let request = UNNotificationRequest(identifier: task.id.uuidString, content: content, trigger: trigger)
             
-            try? await UNUserNotificationCenter.current().add(request)
+            do {
+                try await UNUserNotificationCenter.current().add(request)
+            } catch {
+                Logger.shared.error("Failed to schedule notification: \(error.localizedDescription)")
+            }
         }
     }
     
@@ -65,5 +72,21 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         #else
         completionHandler([.banner, .sound, .badge, .list])
         #endif
+    }
+    
+    /// Handle notification tap — deep link to the task
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let userInfo = response.notification.request.content.userInfo
+        if let taskIDString = userInfo["taskID"] as? String,
+           let uuid = UUID(uuidString: taskIDString) {
+            Task { @MainActor in
+                DeepLinkManager.shared.pendingTaskID = uuid
+            }
+        }
+        completionHandler()
     }
 }

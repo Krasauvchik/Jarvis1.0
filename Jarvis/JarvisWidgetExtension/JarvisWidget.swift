@@ -91,25 +91,28 @@ struct JarvisWidgetEntryView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             } else {
                 ForEach(entry.tasks.prefix(family == .systemMedium ? 5 : 3), id: \.id) { task in
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(widgetColors[task.colorIndex % widgetColors.count])
-                            .frame(width: 8, height: 8)
-                        Text(task.title)
-                            .font(.subheadline)
-                            .lineLimit(1)
-                            .foregroundColor(.primary)
-                        Spacer()
-                        if !task.isAllDay {
-                            Text(task.date, style: .time)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                    Link(destination: URL(string: "jarvis://task/\(task.id.uuidString)")!) {
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(widgetColors[task.colorIndex % widgetColors.count])
+                                .frame(width: 8, height: 8)
+                            Text(task.title)
+                                .font(.subheadline)
+                                .lineLimit(1)
+                                .foregroundColor(.primary)
+                            Spacer()
+                            if !task.isAllDay {
+                                Text(task.date, style: .time)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
                 }
             }
         }
         .padding()
+        .widgetURL(URL(string: "jarvis://today")!)
     }
 }
 

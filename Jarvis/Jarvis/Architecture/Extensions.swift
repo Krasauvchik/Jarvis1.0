@@ -61,28 +61,39 @@ extension Date {
         Calendar.current.date(byAdding: .minute, value: minutes, to: self) ?? self
     }
     
+    private static let relativeDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ru_RU")
+        f.dateFormat = "d MMMM"
+        return f
+    }()
+    
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+    
+    private static let dayOfWeekFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ru_RU")
+        f.dateFormat = "EE"
+        return f
+    }()
+    
     var relativeDescription: String {
         if isToday { return "Сегодня" }
         if isTomorrow { return "Завтра" }
         if isYesterday { return "Вчера" }
-        
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ru_RU")
-        formatter.dateFormat = "d MMMM"
-        return formatter.string(from: self)
+        return Self.relativeDateFormatter.string(from: self)
     }
     
     var timeString: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: self)
+        Self.timeFormatter.string(from: self)
     }
     
     var dayOfWeekShort: String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ru_RU")
-        formatter.dateFormat = "EE"
-        return formatter.string(from: self).uppercased()
+        Self.dayOfWeekFormatter.string(from: self).uppercased()
     }
 }
 

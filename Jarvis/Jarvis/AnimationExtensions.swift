@@ -27,6 +27,11 @@ extension View {
     func pulse(isActive: Bool) -> some View {
         modifier(PulseModifier(isActive: isActive))
     }
+    
+    /// Увеличение при наведении курсора или нажатии (как Dock на Mac). Управляется настройкой.
+    func dockMagnificationEffect() -> some View {
+        modifier(DockMagnificationModifier())
+    }
 }
 
 // MARK: - Appear Animation
@@ -43,6 +48,22 @@ struct AppearAnimationModifier: ViewModifier {
             .onAppear {
                 isVisible = true
             }
+    }
+}
+
+// MARK: - Dock-style Magnification (только hover, чтобы не перехватывать перетаскивание задач)
+
+struct DockMagnificationModifier: ViewModifier {
+    @AppStorage(Config.Storage.dockMagnificationKey) private var enabled = true
+    @State private var isHovered = false
+    
+    private let scale: CGFloat = 1.08
+    
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect((enabled && isHovered) ? scale : 1)
+            .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isHovered)
+            .onHover { isHovered = $0 }
     }
 }
 
@@ -146,6 +167,14 @@ extension AnyTransition {
         .asymmetric(
             insertion: .move(edge: .bottom).combined(with: .opacity).combined(with: .scale(scale: 0.9)),
             removal: .opacity.combined(with: .scale(scale: 0.95))
+        )
+    }
+    
+    /// Анимация строки задачи: появление новой задачи и уход в «Выполнено»
+    static var taskRowTransition: AnyTransition {
+        .asymmetric(
+            insertion: .move(edge: .bottom).combined(with: .opacity).combined(with: .scale(scale: 0.92)),
+            removal: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.96))
         )
     }
 }

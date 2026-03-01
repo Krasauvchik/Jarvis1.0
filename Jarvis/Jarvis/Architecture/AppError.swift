@@ -2,6 +2,41 @@ import Foundation
 import SwiftUI
 import Combine
 
+// MARK: - Network Error Types
+
+enum NetworkError: Error, LocalizedError, Sendable {
+    case noConnection
+    case invalidURL
+    case invalidResponse
+    case httpError(statusCode: Int, message: String?)
+    case decodingError(Error)
+    case timeout
+    case serverError(String)
+    case unauthorized
+    case unknown(Error)
+    
+    var errorDescription: String? {
+        switch self {
+        case .noConnection: return "Нет подключения к интернету"
+        case .invalidURL: return "Неверный URL"
+        case .invalidResponse: return "Неверный ответ сервера"
+        case .httpError(let code, let message): return "Ошибка HTTP \(code): \(message ?? "Неизвестная ошибка")"
+        case .decodingError: return "Ошибка обработки данных"
+        case .timeout: return "Превышено время ожидания"
+        case .serverError(let message): return "Ошибка сервера: \(message)"
+        case .unauthorized: return "Требуется авторизация"
+        case .unknown(let error): return error.localizedDescription
+        }
+    }
+    
+    var isRetryable: Bool {
+        switch self {
+        case .noConnection, .timeout, .serverError: return true
+        default: return false
+        }
+    }
+}
+
 // MARK: - App Error Types
 
 /// Unified error type for the entire application

@@ -87,7 +87,9 @@ final class CalendarSyncService: ObservableObject {
             existing.calendar = calendar
             do {
                 try eventStore.save(existing, span: .thisEvent)
-            } catch {}
+            } catch {
+                Logger.shared.error("Failed to update calendar event: \(error.localizedDescription)")
+            }
             return
         }
         
@@ -103,7 +105,9 @@ final class CalendarSyncService: ObservableObject {
             var updated = task
             updated.calendarEventId = event.eventIdentifier
             PlannerStore.shared.update(updated)
-        } catch {}
+        } catch {
+            Logger.shared.error("Failed to create calendar event: \(error.localizedDescription)")
+        }
     }
     
     /// Удалить событие календаря, привязанное к задаче.
@@ -115,7 +119,9 @@ final class CalendarSyncService: ObservableObject {
             var updated = task
             updated.calendarEventId = nil
             PlannerStore.shared.update(updated)
-        } catch {}
+        } catch {
+            Logger.shared.error("Failed to remove calendar event: \(error.localizedDescription)")
+        }
     }
     
     /// События календаря на указанный день (для отображения в таймлайне при необходимости).

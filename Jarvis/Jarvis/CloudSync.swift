@@ -61,10 +61,18 @@ final class CloudSync: ObservableObject {
     // MARK: - Key-Value Store (Fast sync for small data)
     
     func saveTasks(_ tasks: [PlannerTask]) {
-        guard let data = try? JSONEncoder().encode(tasks) else { return }
-        kvStore.set(data, forKey: "tasks_v4")
-        kvStore.synchronize()
-        lastSyncDate = Date()
+        do {
+            let data = try JSONEncoder().encode(tasks)
+            let sizeKB = data.count / 1024
+            if sizeKB > 900 {
+                Logger.shared.warning("iCloud KV store tasks data is \(sizeKB)KB — approaching 1MB limit!")
+            }
+            kvStore.set(data, forKey: "tasks_v4")
+            kvStore.synchronize()
+            lastSyncDate = Date()
+        } catch {
+            Logger.shared.error("Failed to encode tasks for iCloud: \(error.localizedDescription)")
+        }
     }
     
     func loadTasks() -> [PlannerTask]? {

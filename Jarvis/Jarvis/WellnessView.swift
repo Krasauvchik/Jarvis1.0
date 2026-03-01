@@ -196,17 +196,28 @@ struct WellnessView: View {
     }
     
     private func addMeal() {
+        if let error = WellnessValidator.validateMeal(title: mealTitle, calories: mealCalories) {
+            Logger.shared.warning("Meal validation: \(error)")
+            return
+        }
         wellness.addMeal(MealEntry(title: mealTitle, calories: Int(mealCalories) ?? 0))
         mealTitle = ""
         mealCalories = ""
     }
     
     private func addSleep() {
-        guard sleepEnd > sleepStart else { return }
+        if let error = WellnessValidator.validateSleep(start: sleepStart, end: sleepEnd) {
+            Logger.shared.warning("Sleep validation: \(error)")
+            return
+        }
         wellness.addSleep(SleepEntry(start: sleepStart, end: sleepEnd))
     }
     
     private func addActivity() {
+        if let error = WellnessValidator.validateActivity(title: activityTitle, minutes: activityMinutes) {
+            Logger.shared.warning("Activity validation: \(error)")
+            return
+        }
         wellness.addActivity(ActivityEntry(title: activityTitle, minutes: Int(activityMinutes) ?? 0))
         activityTitle = ""
         activityMinutes = ""

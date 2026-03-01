@@ -1,7 +1,11 @@
 import Foundation
 
 enum AIModel: String, CaseIterable, Identifiable, Codable, Sendable {
-    case gemini, heuristic, onDeviceLarge, cloudGPT
+    case gemini
+    case heuristic
+    case ollama       // локальная модель через Ollama (как в OpenClaw)
+    case onDeviceLarge
+    case cloudGPT
     
     var id: String { rawValue }
     
@@ -9,8 +13,17 @@ enum AIModel: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .gemini: return "Gemini"
         case .heuristic: return "Эвристика"
+        case .ollama: return "Ollama (локально)"
         case .onDeviceLarge: return "На устройстве"
         case .cloudGPT: return "Cloud GPT"
+        }
+    }
+    
+    /// Модель работает локально / не требует облака
+    var isLocal: Bool {
+        switch self {
+        case .heuristic, .ollama, .onDeviceLarge: return true
+        case .gemini, .cloudGPT: return false
         }
     }
 }
@@ -31,8 +44,8 @@ final class HeuristicAdapter: Sendable {
         }
         
         let calendar = Calendar.current
-        var components = calendar.dateComponents([.year, .month, .day], from: referenceDate)
-        components.day! += dayOffset
+        guard let baseDate = calendar.date(byAdding: .day, value: dayOffset, to: referenceDate) else { return nil }
+        var components = calendar.dateComponents([.year, .month, .day], from: baseDate)
         components.hour = hour
         components.minute = minute
         

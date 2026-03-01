@@ -25,6 +25,19 @@
 	<key>NSUserNotificationUsageDescription</key>
 	<string>Уведомления используются для напоминаний и будильников планнера.</string>
 
+	<!-- Deep Linking URL Scheme -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.jarvis.planner</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>jarvis</string>
+			</array>
+		</dict>
+	</array>
+
 	<!-- Разрешить HTTP к бэкенду Jarvis -->
 	<key>NSAppTransportSecurity</key>
 	<dict>

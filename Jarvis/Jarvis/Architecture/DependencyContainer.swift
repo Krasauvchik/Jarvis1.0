@@ -26,6 +26,10 @@ final class DependencyContainer: ObservableObject {
     lazy var themeManager: ThemeManager = .shared
     lazy var notificationManager: NotificationManager = .shared
     lazy var aiManager: AIManager = AIManager()
+    lazy var calendarSyncService: CalendarSyncService = .shared
+    #if !os(watchOS)
+    lazy var messengerService: MessengerService = .shared
+    #endif
     
     // MARK: - Configuration
     

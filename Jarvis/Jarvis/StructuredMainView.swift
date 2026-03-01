@@ -5,44 +5,11 @@ import UniformTypeIdentifiers
 import UIKit
 #endif
 
-// MARK: - Navigation Section
-
-enum NavigationSection: String, CaseIterable, Identifiable {
-    case inbox = "Inbox"
-    case today = "Сегодня"
-    case scheduled = "Запланир."
-    case futurePlans = "Планы на будущее"
-    case completed = "Выполнено"
-    case all = "Все задачи"
-    
-    var id: String { rawValue }
-    
-    var icon: String {
-        switch self {
-        case .inbox: return "tray.fill"
-        case .today: return "calendar"
-        case .scheduled: return "calendar.badge.clock"
-        case .futurePlans: return "sparkles"
-        case .completed: return "checkmark.circle.fill"
-        case .all: return "list.bullet"
-        }
-    }
-    
-    var color: Color {
-        switch self {
-        case .inbox: return JarvisTheme.accentBlue      // синий
-        case .today: return JarvisTheme.accentOrange    // оранжевый
-        case .scheduled: return JarvisTheme.accent      // коралловый/красный
-        case .futurePlans: return JarvisTheme.accentTeal
-        case .completed: return JarvisTheme.accentGreen // зелёный
-        case .all: return JarvisTheme.accentPurple      // фиолетовый
-        }
-    }
-}
-
 // MARK: - Main Structured View
 
 struct StructuredMainView: View {
+    @Environment(\.dependencies) private var dependencies
+    @EnvironmentObject private var deepLinkManager: DeepLinkManager
     @StateObject private var store = PlannerStore.shared
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var userProfile = UserProfile.shared
@@ -58,6 +25,8 @@ struct StructuredMainView: View {
     @State private var editingTask: PlannerTask?
     @State private var draggedTask: PlannerTask?
     @State private var searchQuery = ""
+    @State private var completedDropHighlighted = false
+    @State private var showMessengerShare = false
     
     // Размеры колонок (только iPad/Mac) — сохраняются между запусками
     @AppStorage("jarvis_sidebar_width") private var sidebarWidth: Double = 200
@@ -105,6 +74,36 @@ struct StructuredMainView: View {
             SleepCalculatorSheet(theme: theme)
         }
         .applyTheme(themeManager)
+        #if !os(watchOS)
+        .onReceive(deepLinkManager.$pendingTaskID.compactMap { $0 }) { taskID in
+            if let task = store.tasks.first(where: { $0.id == taskID }) {
+                editingTask = task
+                deepLinkManager.clearPendingTask()
+            }
+        }
+        .onReceive(deepLinkManager.$pendingSection.compactMap { $0 }) { sectionName in
+            if let section = deepLinkManager.resolveSection(sectionName) {
+                selectedSection = section
+                // Map section to iPhone tab index
+                switch section {
+                case .today: selectedTab = 0
+                case .inbox: selectedTab = 1
+                case .calendarSection: selectedTab = 2
+                case .mailSection: selectedTab = 3
+                case .chat: selectedTab = 4
+                case .analytics: selectedTab = 5
+                default: break
+                }
+            }
+            deepLinkManager.clearPendingSection()
+        }
+        .onReceive(deepLinkManager.$pendingAddTask) { show in
+            if show {
+                showAddTask = true
+                deepLinkManager.clearPendingAddTask()
+            }
+        }
+        #endif
     }
     
     // MARK: - watchOS Layout
@@ -156,9 +155,12 @@ struct StructuredMainView: View {
             }
             .buttonStyle(.plain)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(task.title)\(task.isCompleted ? ", выполнена" : "")")
+        .accessibilityHint("Смахните для удаления")
         .swipeActions(edge: .trailing) {
             Button(role: .destructive) {
-                CalendarSyncService.shared.removeEvent(for: task)
+                dependencies.calendarSyncService.removeEvent(for: task)
                 store.delete(task)
             } label: {
                 Label("Удалить", systemImage: "trash")
@@ -180,13 +182,25 @@ struct StructuredMainView: View {
                 .tabItem { Label("Inbox", systemImage: "tray.fill") }
                 .tag(1)
             
-            completedTab
-                .tabItem { Label("Выполнено", systemImage: "checkmark.circle.fill") }
+            calendarTab
+                .tabItem { Label("Календарь", systemImage: "calendar.circle") }
                 .tag(2)
+            
+            mailTab
+                .tabItem { Label("Почта", systemImage: "envelope.fill") }
+                .tag(3)
+            
+            neuralTab
+                .tabItem { Label("AI", systemImage: "brain.head.profile") }
+                .tag(4)
+            
+            analyticsTab
+                .tabItem { Label("Аналитика", systemImage: "chart.bar.xaxis") }
+                .tag(5)
             
             settingsTab
                 .tabItem { Label("Настройки", systemImage: "gearshape.fill") }
-                .tag(3)
+                .tag(6)
         }
         .tint(JarvisTheme.accent)
     }
@@ -196,8 +210,16 @@ struct StructuredMainView: View {
     private var threeColumnLayout: some View {
         HStack(spacing: 0) {
             if !leftPanelHidden {
-                navigationSidebar(onHide: { withAnimation(.easeInOut(duration: 0.2)) { leftPanelHidden = true } })
-                    .frame(width: Swift.max(160, Swift.min(400, sidebarWidth)))
+                SidebarView(
+                    theme: theme,
+                    selectedSection: $selectedSection,
+                    store: store,
+                    onHide: { withAnimation(.easeInOut(duration: 0.2)) { leftPanelHidden = true } },
+                    onShowSleepCalculator: { showSleepCalculator = true },
+                    onShowSettings: { showSettings = true },
+                    onShowProfile: { showProfile = true }
+                )
+                .frame(width: Swift.max(160, Swift.min(400, sidebarWidth)))
                 ColumnResizer(
                     theme: theme,
                     width: $sidebarWidth,
@@ -206,16 +228,54 @@ struct StructuredMainView: View {
                 )
             }
             
-            taskListPanel
-                .frame(width: Swift.max(240, Swift.min(500, taskListWidth)))
-            ColumnResizer(
-                theme: theme,
-                width: $taskListWidth,
-                min: 240,
-                max: 500
-            )
-            
-            timelinePanel
+            if selectedSection == .chat {
+                AIChatView(aiManager: dependencies.aiManager)
+                    .frame(maxWidth: .infinity)
+            } else if selectedSection == .calendarSection {
+                #if !os(watchOS)
+                CalendarView()
+                    .frame(maxWidth: .infinity)
+                #endif
+            } else if selectedSection == .mailSection {
+                #if !os(watchOS)
+                MailView()
+                    .frame(maxWidth: .infinity)
+                #endif
+            } else if selectedSection == .messengers {
+                #if !os(watchOS)
+                MessengerShareSheet(
+                    tasks: store.tasksForDay(selectedDate).filter { !$0.isCompleted },
+                    date: selectedDate
+                )
+                .frame(maxWidth: .infinity)
+                #endif
+            } else if selectedSection == .analytics {
+                #if !os(watchOS)
+                ChartAnalyticsView(aiManager: dependencies.aiManager)
+                    .frame(maxWidth: .infinity)
+                #endif
+            } else if selectedSection == .projects {
+                #if !os(watchOS)
+                ProjectsView()
+                    .frame(maxWidth: .infinity)
+                #endif
+            } else {
+                taskListPanel
+                    .frame(width: Swift.max(240, Swift.min(500, taskListWidth)))
+                ColumnResizer(
+                    theme: theme,
+                    width: $taskListWidth,
+                    min: 240,
+                    max: 500
+                )
+                TimelinePanelView(
+                    theme: theme,
+                    selectedDate: $selectedDate,
+                    store: store,
+                    onEditTask: { editingTask = $0 },
+                    onToggleTask: { toggleTask($0) }
+                )
+            }
         }
         .background(theme.background)
         .overlay(alignment: .leading) {
@@ -228,6 +288,7 @@ struct StructuredMainView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Показать боковую панель")
                 .padding(.leading, 8)
             }
         }
@@ -264,202 +325,6 @@ struct StructuredMainView: View {
         }
     }
 
-    // MARK: - Navigation Sidebar
-    
-    private func navigationSidebar(onHide: @escaping () -> Void) -> some View {
-        VStack(spacing: 0) {
-            // App Header + кнопка скрыть панель
-            HStack {
-                Circle()
-                    .fill(LinearGradient(colors: [JarvisTheme.accent, JarvisTheme.accentOrange], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(width: 36, height: 36)
-                    .overlay(
-                        Text("J")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundColor(.white)
-                    )
-                
-                Text("Jarvis")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundColor(theme.textPrimary)
-                
-                Spacer()
-                
-                Button(action: onHide) {
-                    Image(systemName: "sidebar.leading")
-                        .font(.system(size: 16))
-                        .foregroundColor(theme.textSecondary)
-                }
-                .buttonStyle(.plain)
-                .bounceOnTap()
-                .help("Скрыть панель")
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 16)
-            .animateOnAppear(delay: 0)
-            
-            Divider().background(theme.divider)
-            
-            // Navigation Items
-            ScrollView {
-                VStack(spacing: 4) {
-                    ForEach(Array(NavigationSection.allCases.enumerated()), id: \.element.id) { index, section in
-                        navigationRow(section)
-                            .animateOnAppear(delay: Double(index) * 0.04)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.top, 12)
-            }
-            
-            Spacer()
-            
-            // Statistics
-            VStack(spacing: 8) {
-                Divider().background(theme.divider)
-                
-                HStack(spacing: 16) {
-                    miniStatCard(value: store.tasks.count, label: "Всего", color: JarvisTheme.accent)
-                    miniStatCard(value: completionPercentage, label: "%", color: JarvisTheme.accentGreen)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .animation(.spring(response: 0.4), value: store.tasks.count)
-            }
-            
-            // Bottom Actions
-            VStack(spacing: 8) {
-                Divider().background(theme.divider)
-                
-                HStack(spacing: 12) {
-                    Button(action: { showSleepCalculator = true }) {
-                        Image(systemName: "moon.zzz.fill")
-                            .font(.system(size: 16))
-                            .foregroundColor(theme.textSecondary)
-                    }
-                    .buttonStyle(.plain)
-                    .bounceOnTap()
-                    .help("Калькулятор сна")
-                    
-                    Button(action: { showSettings = true }) {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 16))
-                            .foregroundColor(theme.textSecondary)
-                    }
-                    .buttonStyle(.plain)
-                    .bounceOnTap()
-                    .help("Настройки")
-                    
-                    Spacer()
-                    
-                    Button(action: { showProfile = true }) {
-                        profileAvatar
-                    }
-                    .buttonStyle(.plain)
-                    .bounceOnTap()
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-            }
-        }
-        .background(theme.sidebarBackground)
-    }
-    
-    private func navigationRow(_ section: NavigationSection) -> some View {
-        let isSelected = selectedSection == section
-        let count = taskCount(for: section)
-        
-        return Button(action: {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                selectedSection = section
-            }
-        }) {
-            HStack(spacing: 12) {
-                Image(systemName: section.icon)
-                    .font(.system(size: 16))
-                    .foregroundColor(isSelected ? .white : section.color)
-                    .frame(width: 28, height: 28)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(isSelected ? section.color : section.color.opacity(0.15))
-                    )
-                
-                Text(section.rawValue)
-                    .font(.system(size: 15, weight: isSelected ? .semibold : .medium))
-                    .foregroundColor(isSelected ? theme.textPrimary : theme.textSecondary)
-                
-                Spacer()
-                
-                if count > 0 {
-                    Text("\(count)")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(isSelected ? section.color : theme.textTertiary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule()
-                                .fill(isSelected ? theme.cardBackground : Color.clear)
-                        )
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(isSelected ? theme.cardBackground : Color.clear)
-            )
-            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isSelected)
-        }
-        .buttonStyle(.plain)
-        .bounceOnTap()
-        .dropDestination(for: String.self) { items, _ in
-            guard let taskID = items.first, let uuid = UUID(uuidString: taskID) else { return false }
-            moveTask(taskID: uuid, to: section)
-            return true
-        }
-    }
-    
-    private func taskCount(for section: NavigationSection) -> Int {
-        let calendar = Calendar.current
-        let startOfTomorrow = calendar.startOfDay(for: calendar.date(byAdding: .day, value: 1, to: Date()) ?? Date())
-        switch section {
-        case .inbox:
-            return store.tasks.filter { $0.isInbox && !$0.isCompleted }.count
-        case .today:
-            return store.tasksForDay(Date()).filter { !$0.isCompleted }.count
-        case .scheduled:
-            return store.tasks.filter { !$0.isInbox && !$0.isCompleted && $0.date < startOfTomorrow }.count
-        case .futurePlans:
-            return store.tasks.filter { !$0.isInbox && !$0.isCompleted && $0.date >= startOfTomorrow }.count
-        case .completed:
-            return store.tasks.filter { $0.isCompleted }.count
-        case .all:
-            return store.tasks.count
-        }
-    }
-    
-    private var completionPercentage: Int {
-        guard store.tasks.count > 0 else { return 0 }
-        return Int(Double(store.tasks.filter { $0.isCompleted }.count) / Double(store.tasks.count) * 100)
-    }
-    
-    private func miniStatCard(value: Int, label: String, color: Color) -> some View {
-        VStack(spacing: 2) {
-            Text("\(value)")
-                .font(.system(size: 18, weight: .bold))
-                .foregroundColor(color)
-            Text(label)
-                .font(.system(size: 11))
-                .foregroundColor(theme.textTertiary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.cardBackground)
-        )
-    }
-    
     // MARK: - Task List Panel
     
     private var taskListPanel: some View {
@@ -486,6 +351,7 @@ struct StructuredMainView: View {
                 }
                 .buttonStyle(.plain)
                 .bounceOnTap()
+                .accessibilityLabel("Добавить задачу")
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 16)
@@ -504,6 +370,7 @@ struct StructuredMainView: View {
                             .foregroundColor(theme.textTertiary)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Очистить поиск")
                 }
             }
             .padding(10)
@@ -524,10 +391,11 @@ struct StructuredMainView: View {
                         ForEach(Array(tasks.enumerated()), id: \.element.id) { index, task in
                             taskListRow(task)
                                 .animateOnAppear(delay: Double(index) * 0.05)
-                                .transition(.cardAppear)
+                                .transition(.taskRowTransition)
                         }
                     }
                 }
+                .animation(.spring(response: 0.45, dampingFraction: 0.75), value: filteredTasksForCurrentSection.map(\.id))
                 .padding(.horizontal, 12)
                 .padding(.top, 8)
             }
@@ -554,6 +422,10 @@ struct StructuredMainView: View {
         .background(theme.inboxBackground)
     }
     
+    func taskCount(for section: NavigationSection) -> Int {
+        store.taskCount(for: section)
+    }
+    
     private var sectionSubtitle: String {
         let count = taskCount(for: selectedSection)
         switch selectedSection {
@@ -569,6 +441,18 @@ struct StructuredMainView: View {
             return "\(count) выполнено"
         case .all:
             return "\(count) всего задач"
+        case .calendarSection:
+            return "Google Calendar"
+        case .mailSection:
+            return "Gmail"
+        case .messengers:
+            return "WhatsApp & Telegram"
+        case .analytics:
+            return "Графики и тренды"
+        case .projects:
+            return "Группировка задач"
+        case .chat:
+            return "Чат с нейросетью"
         }
     }
     
@@ -588,6 +472,8 @@ struct StructuredMainView: View {
             return store.tasks.filter { $0.isCompleted }.sorted { $0.date > $1.date }
         case .all:
             return store.tasks.sorted { $0.date < $1.date }
+        case .calendarSection, .mailSection, .messengers, .analytics, .projects, .chat:
+            return []
         }
     }
 
@@ -623,65 +509,79 @@ struct StructuredMainView: View {
         case .futurePlans: return "Нет планов на будущее\nПеретащите сюда задачу"
         case .completed: return "Нет выполненных задач"
         case .all: return "Нет задач"
+        case .calendarSection: return "Календарь"
+        case .mailSection: return "Почта"
+        case .messengers: return ""
+        case .analytics: return ""
+        case .projects: return ""
+        case .chat: return ""
         }
     }
     
     private func taskListRow(_ task: PlannerTask) -> some View {
         HStack(spacing: 12) {
-            // Color indicator
-            Circle()
-                .fill(task.taskColor)
-                .frame(width: 10, height: 10)
-            
-            // Icon
-            Image(systemName: task.icon.isEmpty ? "star.fill" : task.icon)
-                .font(.system(size: 14))
-                .foregroundColor(task.taskColor)
-                .frame(width: 24, height: 24)
-                .background(
-                    Circle().fill(task.taskColor.opacity(0.15))
-                )
-            
-            // Content
-            VStack(alignment: .leading, spacing: 2) {
-                Text(task.title)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(task.isCompleted ? theme.textTertiary : task.taskColor)
-                    .strikethrough(task.isCompleted)
-                    .lineLimit(1)
+            // Область для тапа «редактировать»
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(task.taskColor)
+                    .frame(width: 10, height: 10)
                 
-                if !task.isInbox && !task.isAllDay {
-                    Text(task.date.formatted(date: .abbreviated, time: .shortened))
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.textTertiary)
+                Image(systemName: task.icon.isEmpty ? "star.fill" : task.icon)
+                    .font(.system(size: 14))
+                    .foregroundColor(task.taskColor)
+                    .frame(width: 24, height: 24)
+                    .background(
+                        Circle().fill(task.taskColor.opacity(0.15))
+                    )
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(task.title)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(task.isCompleted ? theme.textTertiary : task.taskColor)
+                        .strikethrough(task.isCompleted)
+                        .lineLimit(1)
+                    
+                    if !task.isInbox && !task.isAllDay {
+                        Text(task.date.formatted(date: .abbreviated, time: .shortened))
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.textTertiary)
+                    }
+                }
+                
+                Spacer(minLength: 0)
+                
+                if task.isInbox && !task.isCompleted {
+                    Button(action: { scheduleTaskToToday(task) }) {
+                        Image(systemName: "calendar.badge.plus")
+                            .font(.system(size: 14))
+                            .foregroundColor(JarvisTheme.accentOrange)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Запланировать на сегодня")
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { editingTask = task }
             
-            Spacer()
-            
-            // Schedule button (for inbox)
-            if task.isInbox && !task.isCompleted {
-                Button(action: { scheduleTaskToToday(task) }) {
-                    Image(systemName: "calendar.badge.plus")
-                        .font(.system(size: 14))
-                        .foregroundColor(JarvisTheme.accentOrange)
-                }
-                .buttonStyle(.plain)
-            }
-            
-            // Кружочек справа: выполнить / отменить
-            Button(action: { toggleTask(task) }) {
+            // Кружок: тап — выполнить/отменить (увеличенная зона нажатия и приоритет жеста)
+            ZStack {
                 Circle()
                     .stroke(task.taskColor, lineWidth: 2)
                     .frame(width: 24, height: 24)
-                    .overlay(
-                        task.isCompleted ?
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(task.taskColor) : nil
-                    )
+                if task.isCompleted {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(task.taskColor)
+                }
             }
-            .buttonStyle(.plain)
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
+            .accessibilityLabel(task.isCompleted ? "Отменить выполнение \(task.title)" : "Выполнить \(task.title)")
+            .accessibilityAddTraits(.isButton)
+            .highPriorityGesture(
+                TapGesture().onEnded { _ in toggleTask(task) }
+            )
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -690,8 +590,9 @@ struct StructuredMainView: View {
                 .fill(theme.cardBackground)
         )
         .contentShape(Rectangle())
-        .bounceOnTap()
-        .onTapGesture { editingTask = task }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Задача: \(task.title)")
+        .dockMagnificationEffect()
         .contextMenu { taskContextMenu(task) }
         .draggable(task.id.uuidString) {
             HStack {
@@ -700,38 +601,8 @@ struct StructuredMainView: View {
             }
             .padding(8)
             .background(RoundedRectangle(cornerRadius: 8).fill(theme.cardBackground))
+            .scaleEffect(1.08)
         }
-    }
-    
-    // MARK: - Timeline Panel
-    
-    private var timelinePanel: some View {
-        VStack(spacing: 0) {
-            // Date header
-            HStack {
-                Text(selectedDate.formatted(.dateTime.day().month(.wide).year()))
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundColor(theme.textPrimary)
-                
-                Spacer()
-                
-                dateNavigation
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
-            .padding(.bottom, 12)
-            
-            // Week strip
-            weekStripLarge
-            
-            Divider().background(theme.divider)
-            
-            // Timeline content
-            ScrollView {
-                timelineContent
-            }
-        }
-        .background(theme.background)
     }
     
     // MARK: - Today Tab (iPhone)
@@ -743,6 +614,7 @@ struct StructuredMainView: View {
                     VStack(spacing: 0) {
                         dateHeader
                         weekStrip
+                        completedDropZone
                         timelineList
                     }
                 }
@@ -811,13 +683,20 @@ struct StructuredMainView: View {
                         
                         ForEach(completedTasks) { task in
                             completedTaskRow(task)
+                                .transition(.taskRowTransition)
                         }
                     }
                 }
+                .animation(.spring(response: 0.45, dampingFraction: 0.75), value: store.tasks.filter { $0.isCompleted }.map(\.id))
                 .padding(.horizontal, 16)
                 .padding(.top, 16)
             }
             .background(theme.background)
+            .dropDestination(for: String.self) { items, _ in
+                guard let taskID = items.first, let uuid = UUID(uuidString: taskID) else { return false }
+                moveTask(taskID: uuid, to: .completed)
+                return true
+            } isTargeted: { _ in }
             .navigationTitle("Выполнено")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
@@ -901,12 +780,14 @@ struct StructuredMainView: View {
                     .foregroundColor(theme.textSecondary)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Восстановить задачу")
         }
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(theme.cardBackground)
         )
+        .dockMagnificationEffect()
         .contextMenu { taskContextMenu(task) }
     }
     
@@ -925,6 +806,44 @@ struct StructuredMainView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 80)
+    }
+    
+    // MARK: - Calendar Tab (iPhone)
+    
+    private var calendarTab: some View {
+        #if !os(watchOS)
+        NavigationStack {
+            CalendarView()
+        }
+        #else
+        Text("Недоступно на watchOS")
+        #endif
+    }
+    
+    // MARK: - Mail Tab (iPhone)
+    
+    private var mailTab: some View {
+        #if !os(watchOS)
+        NavigationStack {
+            MailView()
+        }
+        #else
+        Text("Недоступно на watchOS")
+        #endif
+    }
+    
+    // MARK: - Neural Chat Tab (iPhone)
+    
+    private var neuralTab: some View {
+        NavigationStack {
+            AIChatView(aiManager: dependencies.aiManager)
+        }
+    }
+    
+    // MARK: - Analytics Tab (iPhone)
+    
+    private var analyticsTab: some View {
+        ChartAnalyticsView(aiManager: dependencies.aiManager)
     }
     
     // MARK: - Settings Tab (iPhone)
@@ -1012,8 +931,25 @@ struct StructuredMainView: View {
         
         Divider()
         
+        #if !os(watchOS)
+        Menu("Поделиться") {
+            Button {
+                MessengerService.shared.shareTask(task, via: .whatsapp)
+            } label: {
+                Label("WhatsApp", systemImage: "message.fill")
+            }
+            Button {
+                MessengerService.shared.shareTask(task, via: .telegram)
+            } label: {
+                Label("Telegram", systemImage: "paperplane.fill")
+            }
+        }
+        #endif
+        
+        Divider()
+        
         Button(role: .destructive) {
-            CalendarSyncService.shared.removeEvent(for: task)
+            dependencies.calendarSyncService.removeEvent(for: task)
             store.delete(task)
         } label: {
             Label("Удалить", systemImage: "trash")
@@ -1057,6 +993,7 @@ struct StructuredMainView: View {
                     .background(Circle().fill(theme.cardBackground))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Предыдущий день")
             
             Button(action: { selectedDate = Date() }) {
                 Text("Сегодня")
@@ -1076,6 +1013,7 @@ struct StructuredMainView: View {
                     .background(Circle().fill(theme.cardBackground))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Следующий день")
         }
     }
     
@@ -1097,17 +1035,6 @@ struct StructuredMainView: View {
             }
         }
         .padding(.bottom, 12)
-    }
-    
-    private var weekStripLarge: some View {
-        HStack(spacing: 0) {
-            ForEach(getCurrentWeekDays(), id: \.self) { date in
-                weekDayCell(date: date, compact: false)
-                    .frame(maxWidth: .infinity)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
     }
     
     private func weekDayCell(date: Date, compact: Bool) -> some View {
@@ -1151,99 +1078,155 @@ struct StructuredMainView: View {
         }
     }
     
+    /// Зона сброса на экране «Сегодня»: перетащите задачу сюда — в Выполнено
+    private var completedDropZone: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "checkmark.circle")
+                .font(.system(size: 14))
+                .foregroundColor(JarvisTheme.accentGreen)
+            Text("Перетащите сюда — в Выполнено")
+                .font(.system(size: 13))
+                .foregroundColor(theme.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(completedDropHighlighted ? JarvisTheme.accentGreen.opacity(0.2) : theme.cardBackground.opacity(0.8))
+        )
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+        .dropDestination(for: String.self) { items, _ in
+            guard let taskID = items.first, let uuid = UUID(uuidString: taskID) else { return false }
+            moveTask(taskID: uuid, to: .completed)
+            completedDropHighlighted = false
+            return true
+        } isTargeted: { completedDropHighlighted = $0 }
+    }
+    
     private var timelineList: some View {
         let dayTasks = store.tasksForDay(selectedDate).filter { !$0.isInbox && !$0.isCompleted }
         let sortedTasks = dayTasks.sorted { $0.date < $1.date }
         
-        return VStack(alignment: .leading, spacing: 0) {
-            if sortedTasks.isEmpty {
-                emptyTimelineView
-            } else {
-                ForEach(sortedTasks) { task in
-                    taskRow(task)
-                }
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-    }
-    
-    private var timelineContent: some View {
-        let dayTasks = store.tasksForDay(selectedDate).filter { !$0.isInbox && !$0.isCompleted }
-        let sortedTasks = dayTasks.sorted { $0.date < $1.date }
+        // Group tasks by hour for structured display with drop zones
+        let cal = Calendar.current
+        let tasksByHour = Dictionary(grouping: sortedTasks) { cal.component(.hour, from: $0.date) }
+        
+        // Determine visible hours: from earliest task hour (or 6) to latest (or 22)
+        let earliestHour = sortedTasks.first.map { cal.component(.hour, from: $0.date) } ?? 6
+        let latestHour = sortedTasks.last.map { cal.component(.hour, from: $0.date) } ?? 22
+        let startHour = max(0, min(earliestHour, 6))
+        let endHour = min(24, max(latestHour + 2, 22))
         
         return VStack(alignment: .leading, spacing: 0) {
             if sortedTasks.isEmpty {
                 emptyTimelineView
-                    .padding(.top, 60)
             } else {
-                ForEach(sortedTasks) { task in
-                    draggableTaskRow(task)
+                ForEach(startHour..<endHour, id: \.self) { hour in
+                    let hourTasks = tasksByHour[hour] ?? []
+
+                    // Hour header + drop zone
+                    HStack(spacing: 8) {
+                        Text(String(format: "%02d:00", hour))
+                            .font(.caption.weight(.medium).monospacedDigit())
+                            .foregroundColor(theme.textTertiary)
+                            .frame(width: 40, alignment: .trailing)
+                        
+                        Rectangle()
+                            .fill(theme.textTertiary.opacity(0.15))
+                            .frame(height: 1)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .padding(.top, hourTasks.isEmpty ? 4 : 8)
+                    .contentShape(Rectangle())
+                    .dropDestination(for: String.self) { items, _ in
+                        guard let taskID = items.first, let uuid = UUID(uuidString: taskID) else { return false }
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            moveTaskToDateAndTime(taskID: uuid, date: selectedDate, hour: hour, minute: 0)
+                        }
+                        return true
+                    }
+                    
+                    // Tasks at this hour
+                    ForEach(hourTasks) { task in
+                        draggableTaskRow(task)
+                            .transition(.taskRowTransition)
+                    }
                 }
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 16)
-        .dropDestination(for: String.self) { items, _ in
-            if let taskID = items.first, let uuid = UUID(uuidString: taskID) {
-                moveTaskToDate(uuid, date: selectedDate)
-                return true
-            }
-            return false
-        }
+        .animation(.spring(response: 0.45, dampingFraction: 0.75), value: sortedTasks.map(\.id))
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
     }
     
     // MARK: - Task Rows
     
     private func taskRow(_ task: PlannerTask) -> some View {
         HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 3)
-                .fill(task.taskColor)
-                .frame(width: 4)
-            
-            Circle()
-                .fill(task.taskColor.opacity(0.15))
-                .frame(width: 40, height: 40)
-                .overlay(
-                    Image(systemName: task.icon.isEmpty ? "star.fill" : task.icon)
-                        .font(.system(size: 16))
-                        .foregroundColor(task.taskColor)
-                )
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text(task.title)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(task.isCompleted ? theme.textTertiary : theme.textPrimary)
-                    .strikethrough(task.isCompleted)
+            // Область для тапа «редактировать» — без кружка, чтобы кружок только переключал выполнение
+            HStack(spacing: 12) {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(task.taskColor)
+                    .frame(width: 4)
                 
-                HStack(spacing: 8) {
-                    if !task.isAllDay {
-                        Label(task.date.formatted(date: .omitted, time: .shortened), systemImage: "clock")
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.textSecondary)
-                    }
-                    if task.durationMinutes > 0 && !task.isAllDay {
-                        Text("\(task.durationMinutes) мин")
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.textTertiary)
+                Circle()
+                    .fill(task.taskColor.opacity(0.15))
+                    .frame(width: 40, height: 40)
+                    .overlay(
+                        Image(systemName: task.icon.isEmpty ? "star.fill" : task.icon)
+                            .font(.system(size: 16))
+                            .foregroundColor(task.taskColor)
+                    )
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(task.title)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(task.isCompleted ? theme.textTertiary : theme.textPrimary)
+                        .strikethrough(task.isCompleted)
+                    
+                    HStack(spacing: 8) {
+                        if !task.isAllDay {
+                            Label(task.date.formatted(date: .omitted, time: .shortened), systemImage: "clock")
+                                .font(.system(size: 12))
+                                .foregroundColor(theme.textSecondary)
+                        }
+                        if task.durationMinutes > 0 && !task.isAllDay {
+                            Text("\(task.durationMinutes) мин")
+                                .font(.system(size: 12))
+                                .foregroundColor(theme.textTertiary)
+                        }
+                        if task.priority != .medium {
+                            Image(systemName: task.priority.icon)
+                                .font(.system(size: 10))
+                                .foregroundColor(theme.textTertiary)
+                        }
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { editingTask = task }
             
-            Spacer()
+            Spacer(minLength: 8)
             
-            Button(action: { toggleTask(task) }) {
+            // Кружок: тап — галочка и задача уходит в «Выполнено» (приоритет выше, чем у draggable)
+            ZStack {
                 Circle()
                     .stroke(task.taskColor, lineWidth: 2)
                     .frame(width: 24, height: 24)
-                    .overlay(
-                        task.isCompleted ?
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(task.taskColor) : nil
-                    )
+                if task.isCompleted {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(task.taskColor)
+                }
             }
-            .buttonStyle(.plain)
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
+            .highPriorityGesture(
+                TapGesture().onEnded { _ in toggleTask(task) }
+            )
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 12)
@@ -1254,11 +1237,11 @@ struct StructuredMainView: View {
         )
         .padding(.bottom, 8)
         .contentShape(Rectangle())
-        .onTapGesture { editingTask = task }
+        .dockMagnificationEffect()
         .contextMenu { taskContextMenu(task) }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) {
-                CalendarSyncService.shared.removeEvent(for: task)
+                dependencies.calendarSyncService.removeEvent(for: task)
                 store.delete(task)
             } label: {
                 Label("Удалить", systemImage: "trash")
@@ -1284,6 +1267,7 @@ struct StructuredMainView: View {
                 }
                 .padding(8)
                 .background(RoundedRectangle(cornerRadius: 8).fill(theme.cardBackground))
+                .scaleEffect(1.08)
             }
     }
     
@@ -1299,10 +1283,16 @@ struct StructuredMainView: View {
                 )
             
             VStack(alignment: .leading, spacing: 4) {
-                Text(task.title)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(theme.textPrimary)
-                
+                HStack(spacing: 6) {
+                    Text(task.title)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(theme.textPrimary)
+                    if task.priority != .medium {
+                        Image(systemName: task.priority.icon)
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.textTertiary)
+                    }
+                }
                 if !task.notes.isEmpty {
                     Text(task.notes)
                         .font(.system(size: 13))
@@ -1319,6 +1309,7 @@ struct StructuredMainView: View {
                     .foregroundColor(JarvisTheme.accent)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Запланировать на сегодня")
         }
         .padding(12)
         .background(
@@ -1327,11 +1318,12 @@ struct StructuredMainView: View {
                 .shadow(color: theme.cardShadow, radius: 2, y: 1)
         )
         .contentShape(Rectangle())
+        .dockMagnificationEffect()
         .onTapGesture { editingTask = task }
         .contextMenu { taskContextMenu(task) }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) {
-                CalendarSyncService.shared.removeEvent(for: task)
+                dependencies.calendarSyncService.removeEvent(for: task)
                 store.delete(task)
             } label: {
                 Label("Удалить", systemImage: "trash")
@@ -1390,6 +1382,7 @@ struct StructuredMainView: View {
                 .shadow(color: JarvisTheme.accent.opacity(0.4), radius: 8, y: 4)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Добавить задачу")
         .padding(.trailing, 20)
         .padding(.bottom, 20)
     }
@@ -1399,13 +1392,17 @@ struct StructuredMainView: View {
     private func toggleTask(_ task: PlannerTask) {
         var updated = task
         updated.isCompleted.toggle()
-        store.update(updated)
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) {
+            store.update(updated)
+        }
     }
     
     private func restoreTask(_ task: PlannerTask) {
         var updated = task
         updated.isCompleted = false
-        store.update(updated)
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) {
+            store.update(updated)
+        }
     }
     
     private func scheduleTaskToToday(_ task: PlannerTask) {
@@ -1432,6 +1429,16 @@ struct StructuredMainView: View {
         store.update(updated)
     }
     
+    private func moveTaskToDateAndTime(taskID: UUID, date: Date, hour: Int, minute: Int = 0) {
+        guard let task = store.tasks.first(where: { $0.id == taskID }) else { return }
+        var updated = task
+        updated.isInbox = false
+        updated.isAllDay = false
+        let dayStart = Calendar.current.startOfDay(for: date)
+        updated.date = Calendar.current.date(bySettingHour: hour, minute: minute, second: 0, of: dayStart) ?? dayStart
+        store.update(updated)
+    }
+    
     private func moveToInbox(_ task: PlannerTask) {
         var updated = task
         updated.isInbox = true
@@ -1440,39 +1447,9 @@ struct StructuredMainView: View {
     
     /// Перемещение задачи в папку при drag & drop на пункт навигации
     private func moveTask(taskID: UUID, to section: NavigationSection) {
-        guard let task = store.tasks.first(where: { $0.id == taskID }) else { return }
-        var updated = task
-        let calendar = Calendar.current
-        switch section {
-        case .inbox:
-            updated.isInbox = true
-            updated.isCompleted = false
-        case .today:
-            updated.isInbox = false
-            updated.isCompleted = false
-            let hour = calendar.component(.hour, from: task.date)
-            let minute = calendar.component(.minute, from: task.date)
-            updated.date = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: Date()) ?? Date()
-        case .scheduled:
-            updated.isInbox = false
-            updated.isCompleted = false
-            if calendar.isDateInToday(task.date) || task.date < Date() {
-                if let tomorrow = calendar.date(byAdding: .day, value: 1, to: Date()) {
-                    updated.date = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: tomorrow) ?? tomorrow
-                }
-            }
-        case .futurePlans:
-            updated.isInbox = false
-            updated.isCompleted = false
-            if let nextWeek = calendar.date(byAdding: .day, value: 7, to: Date()) {
-                updated.date = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: nextWeek) ?? nextWeek
-            }
-        case .completed:
-            updated.isCompleted = true
-        case .all:
-            break
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) {
+            store.moveTask(taskID: taskID, to: section)
         }
-        store.update(updated)
     }
     
     private func moveTaskToFuturePlans(_ task: PlannerTask) {
@@ -1497,9 +1474,12 @@ struct StructuredMainView: View {
             colorIndex: task.colorIndex,
             icon: task.icon,
             categoryId: task.categoryId,
-            tagIds: task.tagIds
+            tagIds: task.tagIds,
+            priority: task.priority
         )
-        store.add(newTask)
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) {
+            store.add(newTask)
+        }
     }
     
     private func scheduleForTomorrow(_ task: PlannerTask) {
@@ -1530,1402 +1510,8 @@ struct StructuredMainView: View {
         let today = Date()
         return (-14...14).compactMap { calendar.date(byAdding: .day, value: $0, to: today) }
     }
-    
-    private func getCurrentWeekDays() -> [Date] {
-        let calendar = Calendar.current
-        let startOfWeek = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: selectedDate))!
-        return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: startOfWeek) }
-    }
     #endif
 }
-
-// MARK: - Sleep Calculator Model
-
-@MainActor
-final class SleepCalculator: ObservableObject {
-    @Published var wakeUpTime: Date = Calendar.current.date(bySettingHour: 7, minute: 0, second: 0, of: Date()) ?? Date()
-    @Published var bedTime: Date = Calendar.current.date(bySettingHour: 23, minute: 0, second: 0, of: Date()) ?? Date()
-    @Published var mode: CalculationMode = .wakeUp
-    
-    enum CalculationMode: String, CaseIterable {
-        case wakeUp = "Когда проснуться"
-        case bedTime = "Когда лечь спать"
-    }
-    
-    private let sleepCycleDuration: TimeInterval = 90 * 60
-    private let fallAsleepTime: TimeInterval = 14 * 60
-    
-    var recommendedWakeUpTimes: [Date] {
-        guard mode == .bedTime else { return [] }
-        let fallAsleepTime = bedTime.addingTimeInterval(self.fallAsleepTime)
-        return (4...6).map { cycles in
-            fallAsleepTime.addingTimeInterval(sleepCycleDuration * Double(cycles))
-        }
-    }
-    
-    var recommendedBedTimes: [Date] {
-        guard mode == .wakeUp else { return [] }
-        return (4...6).reversed().map { cycles in
-            wakeUpTime.addingTimeInterval(-sleepCycleDuration * Double(cycles) - fallAsleepTime)
-        }
-    }
-    
-    func sleepDuration(cycles: Int) -> String {
-        let hours = (cycles * 90) / 60
-        let minutes = (cycles * 90) % 60
-        if minutes == 0 { return "\(hours) ч" }
-        return "\(hours) ч \(minutes) мин"
-    }
-    
-    func cyclesDescription(cycles: Int) -> String {
-        let forms = ["цикл", "цикла", "циклов"]
-        let n = cycles % 100
-        let n1 = n % 10
-        let form: String
-        if n > 10 && n < 20 { form = forms[2] }
-        else if n1 > 1 && n1 < 5 { form = forms[1] }
-        else if n1 == 1 { form = forms[0] }
-        else { form = forms[2] }
-        return "\(cycles) \(form)"
-    }
-}
-
-// MARK: - Sleep Calculator Sheet
-
-struct SleepCalculatorSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @StateObject private var calculator = SleepCalculator()
-    let theme: JarvisTheme
-    
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 24) {
-                    Picker("Режим", selection: $calculator.mode) {
-                        ForEach(SleepCalculator.CalculationMode.allCases, id: \.self) { mode in
-                            Text(mode.rawValue).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal)
-                    
-                    VStack(spacing: 12) {
-                        if calculator.mode == .wakeUp {
-                            Text("Во сколько нужно проснуться?")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(theme.textSecondary)
-                            
-                            DatePicker("", selection: $calculator.wakeUpTime, displayedComponents: .hourAndMinute)
-                                #if os(iOS)
-                                .datePickerStyle(.wheel)
-                                #endif
-                                .labelsHidden()
-                        } else {
-                            Text("Во сколько ляжете спать?")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(theme.textSecondary)
-                            
-                            DatePicker("", selection: $calculator.bedTime, displayedComponents: .hourAndMinute)
-                                #if os(iOS)
-                                .datePickerStyle(.wheel)
-                                #endif
-                                .labelsHidden()
-                        }
-                    }
-                    .padding()
-                    .background(RoundedRectangle(cornerRadius: 16).fill(theme.cardBackground))
-                    .padding(.horizontal)
-                    
-                    VStack(spacing: 16) {
-                        HStack {
-                            Image(systemName: "moon.zzz.fill")
-                                .foregroundColor(JarvisTheme.accentPurple)
-                            Text(calculator.mode == .wakeUp ? "Рекомендуемое время засыпания" : "Рекомендуемое время пробуждения")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(theme.textPrimary)
-                        }
-                        
-                        let times = calculator.mode == .wakeUp ? calculator.recommendedBedTimes : calculator.recommendedWakeUpTimes
-                        let cycles = calculator.mode == .wakeUp ? [6, 5, 4] : [4, 5, 6]
-                        
-                        ForEach(Array(zip(times.indices, times)), id: \.0) { index, time in
-                            sleepTimeRow(time: time, cycles: cycles[index], isOptimal: index == 0)
-                        }
-                        
-                        VStack(alignment: .leading, spacing: 8) {
-                            Label("Средний человек засыпает за 14 минут", systemImage: "info.circle")
-                                .font(.system(size: 13))
-                                .foregroundColor(theme.textSecondary)
-                            
-                            Label("Один цикл сна = 90 минут", systemImage: "clock")
-                                .font(.system(size: 13))
-                                .foregroundColor(theme.textSecondary)
-                            
-                            Label("Оптимально: 5-6 циклов (7.5-9 часов)", systemImage: "star")
-                                .font(.system(size: 13))
-                                .foregroundColor(JarvisTheme.accentGreen)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                        .background(RoundedRectangle(cornerRadius: 12).fill(theme.cardBackground.opacity(0.5)))
-                    }
-                    .padding()
-                    .background(RoundedRectangle(cornerRadius: 16).fill(theme.cardBackground))
-                    .padding(.horizontal)
-                }
-                .padding(.vertical)
-            }
-            .background(theme.background)
-            .navigationTitle("Калькулятор сна")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Готово") { dismiss() }
-                }
-            }
-        }
-    }
-    
-    private func sleepTimeRow(time: Date, cycles: Int, isOptimal: Bool) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(time.formatted(date: .omitted, time: .shortened))
-                    .font(.system(size: 24, weight: .bold))
-                    .foregroundColor(isOptimal ? JarvisTheme.accentGreen : theme.textPrimary)
-                
-                Text("\(calculator.cyclesDescription(cycles: cycles)) • \(calculator.sleepDuration(cycles: cycles))")
-                    .font(.system(size: 14))
-                    .foregroundColor(theme.textSecondary)
-            }
-            
-            Spacer()
-            
-            if isOptimal {
-                Text("Оптимально")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(JarvisTheme.accentGreen)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(JarvisTheme.accentGreen.opacity(0.15)))
-            }
-        }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(isOptimal ? JarvisTheme.accentGreen.opacity(0.1) : theme.cardBackground.opacity(0.5))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(isOptimal ? JarvisTheme.accentGreen.opacity(0.3) : Color.clear, lineWidth: 1)
-                )
-        )
-    }
-}
-
-// MARK: - User Profile Model
-
-@MainActor
-final class UserProfile: ObservableObject {
-    static let shared = UserProfile()
-    
-    @Published var name: String {
-        didSet { UserDefaults.standard.set(name, forKey: "jarvis_user_name") }
-    }
-    @Published var email: String {
-        didSet { UserDefaults.standard.set(email, forKey: "jarvis_user_email") }
-    }
-    @Published var avatarEmoji: String {
-        didSet { UserDefaults.standard.set(avatarEmoji, forKey: "jarvis_user_avatar") }
-    }
-    
-    var initials: String {
-        let parts = name.split(separator: " ")
-        if parts.count >= 2 {
-            return String(parts[0].prefix(1) + parts[1].prefix(1)).uppercased()
-        }
-        return String(name.prefix(2)).uppercased()
-    }
-    
-    private init() {
-        name = UserDefaults.standard.string(forKey: "jarvis_user_name") ?? "User"
-        email = UserDefaults.standard.string(forKey: "jarvis_user_email") ?? ""
-        avatarEmoji = UserDefaults.standard.string(forKey: "jarvis_user_avatar") ?? "😊"
-    }
-}
-
-// MARK: - Profile Sheet
-
-struct ProfileSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @StateObject private var userProfile = UserProfile.shared
-    @StateObject private var store = PlannerStore.shared
-    let theme: JarvisTheme
-    
-    @State private var editedName: String = ""
-    @State private var editedEmail: String = ""
-    @State private var selectedEmoji: String = ""
-    
-    private let emojis = ["😊", "😎", "🚀", "⭐️", "🔥", "💪", "🎯", "💡", "🌟", "✨", "🎨", "📱", "💻", "🏆", "👤", "🦊"]
-    
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 24) {
-                    VStack(spacing: 16) {
-                        ZStack {
-                            Circle()
-                                .fill(LinearGradient(colors: [JarvisTheme.accent, JarvisTheme.accentOrange], startPoint: .topLeading, endPoint: .bottomTrailing))
-                                .frame(width: 100, height: 100)
-                            
-                            Text(selectedEmoji)
-                                .font(.system(size: 50))
-                        }
-                        
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 12) {
-                                ForEach(emojis, id: \.self) { emoji in
-                                    Text(emoji)
-                                        .font(.system(size: 28))
-                                        .padding(8)
-                                        .background(
-                                            Circle()
-                                                .fill(selectedEmoji == emoji ? JarvisTheme.accent.opacity(0.2) : Color.clear)
-                                        )
-                                        .onTapGesture { selectedEmoji = emoji }
-                                }
-                            }
-                            .padding(.horizontal)
-                        }
-                    }
-                    .padding(.top, 20)
-                    
-                    VStack(spacing: 16) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Имя")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundColor(theme.textSecondary)
-                            TextField("Введите имя", text: $editedName)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                        
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Email")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundColor(theme.textSecondary)
-                            TextField("Введите email", text: $editedEmail)
-                                .textFieldStyle(.roundedBorder)
-                                #if os(iOS)
-                                .keyboardType(.emailAddress)
-                                .textContentType(.emailAddress)
-                                .autocapitalization(.none)
-                                #endif
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                    
-                    VStack(spacing: 12) {
-                        Text("Статистика")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundColor(theme.textPrimary)
-                        
-                        HStack(spacing: 16) {
-                            profileStatCard(value: "\(store.tasks.count)", label: "Всего", color: JarvisTheme.accent)
-                            profileStatCard(value: "\(store.tasks.filter { $0.isCompleted }.count)", label: "Выполнено", color: JarvisTheme.accentGreen)
-                            profileStatCard(value: "\(completionRate)%", label: "Успех", color: JarvisTheme.accentBlue)
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                    
-                    Spacer()
-                }
-            }
-            .background(theme.background)
-            .navigationTitle("Профиль")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Сохранить") {
-                        userProfile.name = editedName
-                        userProfile.email = editedEmail
-                        userProfile.avatarEmoji = selectedEmoji
-                        dismiss()
-                    }
-                }
-            }
-            .onAppear {
-                editedName = userProfile.name
-                editedEmail = userProfile.email
-                selectedEmoji = userProfile.avatarEmoji
-            }
-        }
-    }
-    
-    private var completionRate: Int {
-        let total = store.tasks.count
-        guard total > 0 else { return 0 }
-        let completed = store.tasks.filter { $0.isCompleted }.count
-        return Int(Double(completed) / Double(total) * 100)
-    }
-    
-    private func profileStatCard(value: String, label: String, color: Color) -> some View {
-        VStack(spacing: 4) {
-            Text(value)
-                .font(.system(size: 24, weight: .bold))
-                .foregroundColor(color)
-            Text(label)
-                .font(.system(size: 12))
-                .foregroundColor(theme.textSecondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 16)
-        .background(RoundedRectangle(cornerRadius: 12).fill(theme.cardBackground))
-    }
-}
-
-// MARK: - Settings Content
-
-private struct IdentifiableURL: Identifiable {
-    let id = UUID()
-    let url: URL
-}
-
-struct SettingsContent: View {
-    let theme: JarvisTheme
-    @Binding var showSleepCalculator: Bool
-    @StateObject private var themeManager = ThemeManager.shared
-    @StateObject private var store = PlannerStore.shared
-    @StateObject private var cloudSync = CloudSync.shared
-    @State private var shareURL: IdentifiableURL?
-    @State private var showImportPicker = false
-    @State private var importMessage: String?
-    @State private var showImportResult = false
-    @State private var importMerge = true
-    @State private var showDeleteCompletedConfirm = false
-    @State private var showDeleteAllConfirm = false
-    @StateObject private var calendarSync = CalendarSyncService.shared
-    
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                settingsSection(title: "Синхронизация", icon: "icloud.fill") {
-                    HStack {
-                        Label("iCloud", systemImage: "icloud")
-                            .foregroundColor(theme.textPrimary)
-                        Spacer()
-                        if cloudSync.isSyncing {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                        } else if let date = cloudSync.lastSyncDate {
-                            Text(date.formatted(date: .omitted, time: .shortened))
-                                .font(.system(size: 13))
-                                .foregroundColor(theme.textSecondary)
-                        } else {
-                            Text("Включено")
-                                .font(.system(size: 13))
-                                .foregroundColor(theme.textSecondary)
-                        }
-                    }
-                    .padding(.vertical, 8)
-                    if let err = cloudSync.syncError {
-                        Text(err)
-                            .font(.system(size: 12))
-                            .foregroundColor(JarvisTheme.accentOrange)
-                            .padding(.vertical, 4)
-                    }
-                    Button(action: { cloudSync.forceSync() }) {
-                        Label("Синхронизировать сейчас", systemImage: "arrow.clockwise")
-                            .foregroundColor(JarvisTheme.accent)
-                    }
-                    .buttonStyle(.plain)
-                    .bounceOnTap()
-                    .disabled(cloudSync.isSyncing)
-                    .padding(.vertical, 4)
-                }
-                
-                settingsSection(title: "Оформление", icon: "paintbrush.fill") {
-                    ForEach(ThemeMode.allCases, id: \.self) { mode in
-                        themeRow(mode: mode)
-                    }
-                }
-                
-                settingsSection(title: "Здоровье", icon: "heart.fill") {
-                    Button(action: { showSleepCalculator = true }) {
-                        HStack(spacing: 16) {
-                            ZStack {
-                                Circle()
-                                    .fill(JarvisTheme.accentPurple.opacity(0.15))
-                                    .frame(width: 44, height: 44)
-                                Image(systemName: "moon.zzz.fill")
-                                    .font(.system(size: 20))
-                                    .foregroundColor(JarvisTheme.accentPurple)
-                            }
-                            
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Калькулятор сна")
-                                    .font(.system(size: 16, weight: .medium))
-                                    .foregroundColor(theme.textPrimary)
-                                Text("Рассчитать оптимальное время")
-                                    .font(.system(size: 13))
-                                    .foregroundColor(theme.textSecondary)
-                            }
-                            
-                            Spacer()
-                            
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 14))
-                                .foregroundColor(theme.textTertiary)
-                        }
-                        .padding(.vertical, 8)
-                    }
-                    .buttonStyle(.plain)
-                    .bounceOnTap()
-                }
-                
-                settingsSection(title: "Календарь", icon: "calendar") {
-                    Button(action: {
-                        Task {
-                            _ = await calendarSync.requestAccess()
-                        }
-                    }) {
-                        HStack {
-                            Label("Разрешить доступ к календарю", systemImage: "calendar.badge.plus")
-                                .foregroundColor(theme.textPrimary)
-                            Spacer()
-                            if calendarSync.isAuthorizedForCalendar {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(JarvisTheme.accentGreen)
-                            }
-                        }
-                        .padding(.vertical, 8)
-                    }
-                    .buttonStyle(.plain)
-                    .bounceOnTap()
-                    Toggle(isOn: Binding(
-                        get: { calendarSync.syncToCalendarEnabled },
-                        set: { calendarSync.setSyncToCalendarEnabled($0) }
-                    )) {
-                        Label("Синхронизировать задачи с Календарём", systemImage: "calendar")
-                            .foregroundColor(theme.textPrimary)
-                    }
-                    .padding(.vertical, 4)
-                }
-                
-                settingsSection(title: "Уведомления", icon: "bell.badge.fill") {
-                    settingsToggle(title: "Напоминания", icon: "bell.fill", isOn: .constant(true))
-                    settingsToggle(title: "Звук", icon: "speaker.wave.2.fill", isOn: .constant(true))
-                }
-                
-                settingsSection(title: "Статистика", icon: "chart.bar.fill") {
-                    statsRow(title: "Всего задач", icon: "list.bullet", value: "\(store.tasks.count)", color: JarvisTheme.accent)
-                    statsRow(title: "Выполнено", icon: "checkmark.circle", value: "\(store.tasks.filter { $0.isCompleted }.count)", color: JarvisTheme.accentGreen)
-                    statsRow(title: "В Inbox", icon: "tray", value: "\(store.tasks.filter { $0.isInbox && !$0.isCompleted }.count)", color: JarvisTheme.accentOrange)
-                }
-                
-                settingsSection(title: "Категории и теги", icon: "folder.fill") {
-                    NavigationLink(destination: CategoriesTagsManageView(theme: theme)) {
-                        HStack {
-                            Label("Управление категориями и тегами", systemImage: "tag.fill")
-                                .foregroundColor(theme.textPrimary)
-                            Spacer()
-                            Text("\(store.categories.count) / \(store.tags.count)")
-                                .foregroundColor(theme.textSecondary)
-                        }
-                        .padding(.vertical, 8)
-                    }
-                }
-                
-                settingsSection(title: "Данные", icon: "externaldrive.fill") {
-                    Button(action: {
-                        if let url = ExportImport.createExportURL(store: store) {
-                            shareURL = IdentifiableURL(url: url)
-                        }
-                    }) {
-                        HStack {
-                            Label("Экспорт данных", systemImage: "square.and.arrow.up")
-                                .foregroundColor(theme.textPrimary)
-                            Spacer()
-                        }
-                        .padding(.vertical, 8)
-                    }
-                    .buttonStyle(.plain)
-                    .bounceOnTap()
-                    
-                    Button(action: { showImportPicker = true }) {
-                        HStack {
-                            Label("Импорт данных", systemImage: "square.and.arrow.down")
-                                .foregroundColor(theme.textPrimary)
-                            Spacer()
-                        }
-                        .padding(.vertical, 8)
-                    }
-                    .buttonStyle(.plain)
-                    .bounceOnTap()
-                    #if os(iOS)
-                    .fileImporter(
-                        isPresented: $showImportPicker,
-                        allowedContentTypes: [.json],
-                        allowsMultipleSelection: false
-                    ) { result in
-                        Task { @MainActor in
-                            switch result {
-                            case .success(let urls):
-                                guard let url = urls.first else { return }
-                                guard url.startAccessingSecurityScopedResource() else {
-                                    importMessage = "Нет доступа к файлу"
-                                    showImportResult = true
-                                    return
-                                }
-                                defer { url.stopAccessingSecurityScopedResource() }
-                                importMessage = ExportImport.importFromURL(url, store: store, merge: importMerge)
-                                showImportResult = true
-                            case .failure:
-                                importMessage = "Ошибка выбора файла"
-                                showImportResult = true
-                            }
-                        }
-                    }
-                    #endif
-                    
-                    Button(action: { showDeleteCompletedConfirm = true }) {
-                        HStack {
-                            Label("Очистить выполненные", systemImage: "trash")
-                                .foregroundColor(JarvisTheme.accentOrange)
-                            Spacer()
-                        }
-                        .padding(.vertical, 8)
-                    }
-                    .buttonStyle(.plain)
-                    .bounceOnTap()
-                    .disabled(store.tasks.filter(\.isCompleted).isEmpty)
-                    
-                    Button(action: { showDeleteAllConfirm = true }) {
-                        HStack {
-                            Label("Удалить все задачи", systemImage: "trash.fill")
-                                .foregroundColor(.red)
-                            Spacer()
-                        }
-                        .padding(.vertical, 8)
-                    }
-                    .buttonStyle(.plain)
-                    .bounceOnTap()
-                    .disabled(store.tasks.isEmpty)
-                }
-                .sheet(item: $shareURL) { item in
-                    #if os(iOS)
-                    ShareSheetView(items: [item.url])
-                    #else
-                    EmptyView()
-                    #endif
-                }
-                .alert("Импорт", isPresented: $showImportResult) {
-                    Button("OK", role: .cancel) { }
-                } message: {
-                    if let msg = importMessage { Text(msg) }
-                }
-                
-                settingsSection(title: "О приложении", icon: "info.circle.fill") {
-                    HStack {
-                        Label("Версия", systemImage: "info.circle")
-                            .foregroundColor(theme.textPrimary)
-                        Spacer()
-                        Text("1.0.0")
-                            .foregroundColor(theme.textSecondary)
-                    }
-                    .padding(.vertical, 4)
-                    
-                    HStack {
-                        Label("Сборка", systemImage: "hammer")
-                            .foregroundColor(theme.textPrimary)
-                        Spacer()
-                        Text("2026.03")
-                            .foregroundColor(theme.textSecondary)
-                    }
-                    .padding(.vertical, 4)
-                }
-            }
-            .padding()
-        }
-        .background(theme.background)
-        .confirmationDialog("Удалить выполненные?", isPresented: $showDeleteCompletedConfirm, titleVisibility: .visible) {
-            Button("Удалить", role: .destructive) {
-                NotificationManager.shared.cancelAll()
-                store.removeCompleted()
-            }
-            Button("Отмена", role: .cancel) { }
-        } message: {
-            Text("Будут удалены все задачи со статусом «выполнено».")
-        }
-        .confirmationDialog("Удалить все задачи?", isPresented: $showDeleteAllConfirm, titleVisibility: .visible) {
-            Button("Удалить всё", role: .destructive) {
-                NotificationManager.shared.cancelAll()
-                store.removeAll()
-            }
-            Button("Отмена", role: .cancel) { }
-        } message: {
-            Text("Все задачи и напоминания будут удалены. Это действие нельзя отменить.")
-        }
-    }
-    
-    private func settingsSection<Content: View>(title: String, icon: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label(title, systemImage: icon)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.textSecondary)
-            
-            VStack(spacing: 0) {
-                content()
-            }
-            .padding()
-            .background(RoundedRectangle(cornerRadius: 16).fill(theme.cardBackground))
-        }
-    }
-    
-    private func themeRow(mode: ThemeMode) -> some View {
-        Button(action: {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                themeManager.currentTheme = mode
-            }
-        }) {
-            HStack(spacing: 16) {
-                ZStack {
-                    Circle()
-                        .fill(themeBackgroundColor(for: mode))
-                        .frame(width: 44, height: 44)
-                    Image(systemName: themeIcon(for: mode))
-                        .font(.system(size: 20))
-                        .foregroundColor(themeIconColor(for: mode))
-                }
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(mode.displayName)
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(theme.textPrimary)
-                    Text(themeDescription(for: mode))
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.textSecondary)
-                }
-                
-                Spacer()
-                
-                if themeManager.currentTheme == mode {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 22))
-                        .foregroundColor(JarvisTheme.accent)
-                }
-            }
-            .padding(.vertical, 8)
-        }
-        .buttonStyle(.plain)
-    }
-    
-    private func settingsToggle(title: String, icon: String, isOn: Binding<Bool>) -> some View {
-        Toggle(isOn: isOn) {
-            Label(title, systemImage: icon)
-                .foregroundColor(theme.textPrimary)
-        }
-        .padding(.vertical, 4)
-    }
-    
-    private func statsRow(title: String, icon: String, value: String, color: Color) -> some View {
-        HStack {
-            Label(title, systemImage: icon)
-                .foregroundColor(theme.textPrimary)
-            Spacer()
-            Text(value)
-                .foregroundColor(color)
-                .fontWeight(.semibold)
-        }
-        .padding(.vertical, 4)
-    }
-    
-    private func themeIcon(for mode: ThemeMode) -> String {
-        switch mode {
-        case .light: return "sun.max.fill"
-        case .dark: return "moon.fill"
-        case .system: return "circle.lefthalf.filled"
-        }
-    }
-    
-    private func themeBackgroundColor(for mode: ThemeMode) -> Color {
-        switch mode {
-        case .light: return Color(red: 1.0, green: 0.95, blue: 0.8)
-        case .dark: return Color(red: 0.15, green: 0.15, blue: 0.2)
-        case .system: return Color(red: 0.5, green: 0.5, blue: 0.55)
-        }
-    }
-    
-    private func themeIconColor(for mode: ThemeMode) -> Color {
-        switch mode {
-        case .light: return Color.orange
-        case .dark: return Color.purple
-        case .system: return Color.white
-        }
-    }
-    
-    private func themeDescription(for mode: ThemeMode) -> String {
-        switch mode {
-        case .light: return "Яркая и светлая тема"
-        case .dark: return "Комфортно для глаз в темноте"
-        case .system: return "Следует настройкам устройства"
-        }
-    }
-}
-
-// MARK: - Categories & Tags Management (стиль как в Настройках — карточки)
-
-struct CategoriesTagsManageView: View {
-    let theme: JarvisTheme
-    @StateObject private var store = PlannerStore.shared
-    @State private var showAddCategory = false
-    @State private var showAddTag = false
-    @State private var editingCategory: TaskCategory?
-    @State private var editingTag: TaskTag?
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                categoriesCard
-                    .animateOnAppear(delay: 0)
-                tagsCard
-                    .animateOnAppear(delay: 0.08)
-            }
-            .padding()
-        }
-        .background(theme.background)
-        .navigationTitle("Категории и теги")
-        #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
-        #endif
-        .sheet(isPresented: $showAddCategory) {
-            AddCategorySheet(theme: theme, category: nil)
-        }
-        .sheet(item: $editingCategory) { cat in
-            AddCategorySheet(theme: theme, category: cat)
-        }
-        .sheet(isPresented: $showAddTag) {
-            AddTagSheet(theme: theme, tag: nil)
-        }
-        .sheet(item: $editingTag) { tag in
-            AddTagSheet(theme: theme, tag: tag)
-        }
-    }
-
-    private var categoriesCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Категории", systemImage: "folder.fill")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.textSecondary)
-            VStack(spacing: 0) {
-                ForEach(store.categories) { cat in
-                    HStack(spacing: 12) {
-                        Button(action: { editingCategory = cat }) {
-                            HStack(spacing: 12) {
-                                Image(systemName: cat.icon)
-                                    .foregroundColor(cat.color)
-                                    .frame(width: 28)
-                                Text(cat.name)
-                                    .font(.system(size: 16, weight: .medium))
-                                    .foregroundColor(theme.textPrimary)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .buttonStyle(.plain)
-                        .bounceOnTap()
-                        Button(action: { store.removeCategory(cat) }) {
-                            Image(systemName: "trash")
-                                .font(.system(size: 14))
-                                .foregroundColor(theme.textTertiary)
-                        }
-                        .buttonStyle(.plain)
-                        .bounceOnTap()
-                    }
-                    .padding(.vertical, 8)
-                }
-                Button(action: { showAddCategory = true }) {
-                    Label("Добавить категорию", systemImage: "plus.circle.fill")
-                        .font(.system(size: 15))
-                        .foregroundColor(JarvisTheme.accent)
-                }
-                .bounceOnTap()
-                .padding(.top, 8)
-            }
-            .padding()
-            .background(RoundedRectangle(cornerRadius: 16).fill(theme.cardBackground))
-        }
-    }
-
-    private var tagsCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Теги", systemImage: "tag.fill")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.textSecondary)
-            VStack(spacing: 0) {
-                ForEach(store.tags) { tag in
-                    HStack(spacing: 12) {
-                        Button(action: { editingTag = tag }) {
-                            HStack(spacing: 12) {
-                                Circle().fill(tag.color).frame(width: 10, height: 10)
-                                Text(tag.name)
-                                    .font(.system(size: 16, weight: .medium))
-                                    .foregroundColor(theme.textPrimary)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .buttonStyle(.plain)
-                        .bounceOnTap()
-                        Button(action: { store.removeTag(tag) }) {
-                            Image(systemName: "trash")
-                                .font(.system(size: 14))
-                                .foregroundColor(theme.textTertiary)
-                        }
-                        .buttonStyle(.plain)
-                        .bounceOnTap()
-                    }
-                    .padding(.vertical, 8)
-                }
-                Button(action: { showAddTag = true }) {
-                    Label("Добавить тег", systemImage: "plus.circle.fill")
-                        .font(.system(size: 15))
-                        .foregroundColor(JarvisTheme.accent)
-                }
-                .bounceOnTap()
-                .padding(.top, 8)
-            }
-            .padding()
-            .background(RoundedRectangle(cornerRadius: 16).fill(theme.cardBackground))
-        }
-    }
-}
-
-struct AddCategorySheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @StateObject private var store = PlannerStore.shared
-    let theme: JarvisTheme
-    let category: TaskCategory?
-    @State private var name: String = ""
-    @State private var colorIndex: Int = 0
-    @State private var icon: String = "folder.fill"
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                TextField("Название", text: $name)
-                Section("Цвет") {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
-                            ForEach(0..<JarvisTheme.taskColors.count, id: \.self) { i in
-                                Circle()
-                                    .fill(JarvisTheme.taskColors[i])
-                                    .frame(width: 36, height: 36)
-                                    .overlay(colorIndex == i ? Circle().stroke(theme.textPrimary, lineWidth: 3) : nil)
-                                    .onTapGesture { colorIndex = i }
-                            }
-                        }
-                        .padding(.vertical, 8)
-                    }
-                }
-                Section("Иконка") {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
-                            ForEach(TaskIcon.allCases, id: \.rawValue) { taskIcon in
-                                Image(systemName: taskIcon.systemName)
-                                    .font(.system(size: 20))
-                                    .foregroundColor(icon == taskIcon.rawValue ? JarvisTheme.taskColors[colorIndex] : theme.textSecondary)
-                                    .frame(width: 44, height: 44)
-                                    .background(Circle().fill(icon == taskIcon.rawValue ? JarvisTheme.taskColors[colorIndex].opacity(0.2) : Color.clear))
-                                    .onTapGesture { icon = taskIcon.rawValue }
-                            }
-                        }
-                        .padding(.vertical, 8)
-                    }
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .background(theme.background)
-            .navigationTitle(category == nil ? "Новая категория" : "Редактировать")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Готово") {
-                        if let cat = category {
-                            var updated = cat
-                            updated.name = name
-                            updated.colorIndex = colorIndex
-                            updated.icon = icon
-                            store.updateCategory(updated)
-                        } else {
-                            store.addCategory(TaskCategory(name: name, colorIndex: colorIndex, icon: icon))
-                        }
-                        dismiss()
-                    }
-                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            }
-            .onAppear {
-                if let cat = category {
-                    name = cat.name
-                    colorIndex = cat.colorIndex
-                    icon = cat.icon
-                }
-            }
-        }
-    }
-}
-
-struct AddTagSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @StateObject private var store = PlannerStore.shared
-    let theme: JarvisTheme
-    let tag: TaskTag?
-    @State private var name: String = ""
-    @State private var colorIndex: Int = 0
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                TextField("Название тега", text: $name)
-                Section("Цвет") {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
-                            ForEach(0..<JarvisTheme.taskColors.count, id: \.self) { i in
-                                Circle()
-                                    .fill(JarvisTheme.taskColors[i])
-                                    .frame(width: 36, height: 36)
-                                    .overlay(colorIndex == i ? Circle().stroke(theme.textPrimary, lineWidth: 3) : nil)
-                                    .onTapGesture { colorIndex = i }
-                            }
-                        }
-                        .padding(.vertical, 8)
-                    }
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .background(theme.background)
-            .navigationTitle(tag == nil ? "Новый тег" : "Редактировать тег")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Готово") {
-                        if let t = tag {
-                            var updated = t
-                            updated.name = name
-                            updated.colorIndex = colorIndex
-                            store.updateTag(updated)
-                        } else {
-                            store.addTag(TaskTag(name: name, colorIndex: colorIndex))
-                        }
-                        dismiss()
-                    }
-                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            }
-            .onAppear {
-                if let t = tag {
-                    name = t.name
-                    colorIndex = t.colorIndex
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Settings Sheet
-
-struct SettingsSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var showSleepCalculator = false
-    let theme: JarvisTheme
-    
-    var body: some View {
-        NavigationStack {
-            SettingsContent(theme: theme, showSleepCalculator: $showSleepCalculator)
-                .navigationTitle("Настройки")
-                #if os(iOS)
-                .navigationBarTitleDisplayMode(.inline)
-                #endif
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Готово") { dismiss() }
-                    }
-                }
-                .sheet(isPresented: $showSleepCalculator) {
-                    SleepCalculatorSheet(theme: theme)
-                }
-        }
-    }
-}
-
-// MARK: - Add Task Sheet
-
-struct AddTaskSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @StateObject private var store = PlannerStore.shared
-    let date: Date
-    let theme: JarvisTheme
-    
-    @State private var title = ""
-    @State private var notes = ""
-    @State private var taskDate: Date
-    @State private var duration = 30
-    @State private var isAllDay = false
-    @State private var hasAlarm = true
-    @State private var isInbox = false
-    @State private var colorIndex = 0
-    @State private var icon = "star.fill"
-    @State private var selectedCategoryId: UUID?
-    @State private var selectedTagIds: Set<UUID> = []
-
-    init(date: Date, theme: JarvisTheme) {
-        self.date = date
-        self.theme = theme
-        self._taskDate = State(initialValue: date)
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField("Название задачи", text: $title)
-                    TextField("Заметки", text: $notes, axis: .vertical)
-                        .lineLimit(3)
-                }
-                .animateOnAppear(delay: 0)
-                
-                Section("Категория") {
-                    Picker("Категория", selection: $selectedCategoryId) {
-                        Text("Без категории").tag(nil as UUID?)
-                        ForEach(store.categories) { cat in
-                            HStack(spacing: 8) {
-                                Image(systemName: cat.icon)
-                                    .foregroundColor(cat.color)
-                                Text(cat.name)
-                            }
-                            .tag(cat.id as UUID?)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                }
-
-                Section("Теги") {
-                    if store.tags.isEmpty {
-                        Text("Добавьте теги в настройках")
-                            .foregroundColor(theme.textSecondary)
-                    } else {
-                        ForEach(store.tags) { tag in
-                            Toggle(isOn: Binding(
-                                get: { selectedTagIds.contains(tag.id) },
-                                set: { if $0 { selectedTagIds.insert(tag.id) } else { selectedTagIds.remove(tag.id) } }
-                            )) {
-                                HStack(spacing: 8) {
-                                    Circle().fill(tag.color).frame(width: 8, height: 8)
-                                    Text(tag.name)
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                Section {
-                    Toggle("В Inbox (без времени)", isOn: $isInbox)
-                    
-                    if !isInbox {
-                        DatePicker("Дата и время", selection: $taskDate)
-                        Toggle("Весь день", isOn: $isAllDay)
-                        
-                        if !isAllDay {
-                            Picker("Длительность", selection: $duration) {
-                                Text("15 мин").tag(15)
-                                Text("30 мин").tag(30)
-                                Text("45 мин").tag(45)
-                                Text("1 час").tag(60)
-                                Text("1.5 часа").tag(90)
-                                Text("2 часа").tag(120)
-                            }
-                        }
-                    }
-                    
-                    Toggle("Напоминание", isOn: $hasAlarm)
-                }
-                
-                Section("Цвет") {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
-                            ForEach(0..<JarvisTheme.taskColors.count, id: \.self) { i in
-                                Circle()
-                                    .fill(JarvisTheme.taskColors[i])
-                                    .frame(width: 36, height: 36)
-                                    .overlay(
-                                        colorIndex == i ?
-                                        Circle().stroke(theme.textPrimary, lineWidth: 3) : nil
-                                    )
-                                    .onTapGesture { colorIndex = i }
-                            }
-                        }
-                        .padding(.vertical, 8)
-                    }
-                }
-                
-                Section("Иконка") {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
-                            ForEach(TaskIcon.allCases, id: \.rawValue) { taskIcon in
-                                Image(systemName: taskIcon.systemName)
-                                    .font(.system(size: 20))
-                                    .foregroundColor(icon == taskIcon.rawValue ? JarvisTheme.taskColors[colorIndex] : theme.textSecondary)
-                                    .frame(width: 44, height: 44)
-                                    .background(
-                                        Circle()
-                                            .fill(icon == taskIcon.rawValue ? JarvisTheme.taskColors[colorIndex].opacity(0.2) : Color.clear)
-                                    )
-                                    .onTapGesture { icon = taskIcon.rawValue }
-                            }
-                        }
-                        .padding(.vertical, 8)
-                    }
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .background(theme.background)
-            .navigationTitle("Новая задача")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Добавить") {
-                        let task = PlannerTask(
-                            title: title,
-                            notes: notes,
-                            date: taskDate,
-                            durationMinutes: duration,
-                            isAllDay: isAllDay,
-                            hasAlarm: hasAlarm,
-                            isInbox: isInbox,
-                            colorIndex: colorIndex,
-                            icon: icon,
-                            categoryId: selectedCategoryId,
-                            tagIds: Array(selectedTagIds)
-                        )
-                        store.add(task)
-                        CalendarSyncService.shared.addOrUpdateEvent(for: task)
-                        dismiss()
-                    }
-                    .disabled(title.isEmpty)
-                }
-            }
-        }
-        .presentationDetents([.large])
-    }
-}
-
-// MARK: - Edit Task Sheet
-
-struct EditTaskSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @StateObject private var store = PlannerStore.shared
-    let task: PlannerTask
-    let theme: JarvisTheme
-    
-    @State private var title: String
-    @State private var notes: String
-    @State private var taskDate: Date
-    @State private var duration: Int
-    @State private var isAllDay: Bool
-    @State private var hasAlarm: Bool
-    @State private var isInbox: Bool
-    @State private var colorIndex: Int
-    @State private var icon: String
-    @State private var selectedCategoryId: UUID?
-    @State private var selectedTagIds: Set<UUID>
-
-    init(task: PlannerTask, theme: JarvisTheme) {
-        self.task = task
-        self.theme = theme
-        self._title = State(initialValue: task.title)
-        self._notes = State(initialValue: task.notes)
-        self._taskDate = State(initialValue: task.date)
-        self._duration = State(initialValue: task.durationMinutes)
-        self._isAllDay = State(initialValue: task.isAllDay)
-        self._hasAlarm = State(initialValue: task.hasAlarm)
-        self._isInbox = State(initialValue: task.isInbox)
-        self._colorIndex = State(initialValue: task.colorIndex)
-        self._icon = State(initialValue: task.icon)
-        self._selectedCategoryId = State(initialValue: task.categoryId)
-        self._selectedTagIds = State(initialValue: Set(task.tagIds))
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField("Название задачи", text: $title)
-                    TextField("Заметки", text: $notes, axis: .vertical)
-                        .lineLimit(3)
-                }
-                
-                Section("Категория") {
-                    Picker("Категория", selection: $selectedCategoryId) {
-                        Text("Без категории").tag(nil as UUID?)
-                        ForEach(store.categories) { cat in
-                            HStack(spacing: 8) {
-                                Image(systemName: cat.icon)
-                                    .foregroundColor(cat.color)
-                                Text(cat.name)
-                            }
-                            .tag(cat.id as UUID?)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                }
-
-                Section("Теги") {
-                    if store.tags.isEmpty {
-                        Text("Добавьте теги в настройках")
-                            .foregroundColor(theme.textSecondary)
-                    } else {
-                        ForEach(store.tags) { tag in
-                            Toggle(isOn: Binding(
-                                get: { selectedTagIds.contains(tag.id) },
-                                set: { if $0 { selectedTagIds.insert(tag.id) } else { selectedTagIds.remove(tag.id) } }
-                            )) {
-                                HStack(spacing: 8) {
-                                    Circle().fill(tag.color).frame(width: 8, height: 8)
-                                    Text(tag.name)
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                Section {
-                    Toggle("В Inbox (без времени)", isOn: $isInbox)
-                    
-                    if !isInbox {
-                        DatePicker("Дата и время", selection: $taskDate)
-                        Toggle("Весь день", isOn: $isAllDay)
-                        
-                        if !isAllDay {
-                            Picker("Длительность", selection: $duration) {
-                                Text("15 мин").tag(15)
-                                Text("30 мин").tag(30)
-                                Text("45 мин").tag(45)
-                                Text("1 час").tag(60)
-                                Text("1.5 часа").tag(90)
-                                Text("2 часа").tag(120)
-                            }
-                        }
-                    }
-                    
-                    Toggle("Напоминание", isOn: $hasAlarm)
-                }
-                
-                Section("Цвет") {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
-                            ForEach(0..<JarvisTheme.taskColors.count, id: \.self) { i in
-                                Circle()
-                                    .fill(JarvisTheme.taskColors[i])
-                                    .frame(width: 36, height: 36)
-                                    .overlay(
-                                        colorIndex == i ?
-                                        Circle().stroke(theme.textPrimary, lineWidth: 3) : nil
-                                    )
-                                    .onTapGesture { colorIndex = i }
-                            }
-                        }
-                        .padding(.vertical, 8)
-                    }
-                }
-                
-                Section("Иконка") {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
-                            ForEach(TaskIcon.allCases, id: \.rawValue) { taskIcon in
-                                Image(systemName: taskIcon.systemName)
-                                    .font(.system(size: 20))
-                                    .foregroundColor(icon == taskIcon.rawValue ? JarvisTheme.taskColors[colorIndex] : theme.textSecondary)
-                                    .frame(width: 44, height: 44)
-                                    .background(
-                                        Circle()
-                                            .fill(icon == taskIcon.rawValue ? JarvisTheme.taskColors[colorIndex].opacity(0.2) : Color.clear)
-                                    )
-                                    .onTapGesture { icon = taskIcon.rawValue }
-                            }
-                        }
-                        .padding(.vertical, 8)
-                    }
-                }
-                
-                Section {
-                    Button("Удалить задачу", role: .destructive) {
-                        CalendarSyncService.shared.removeEvent(for: task)
-                        store.delete(task)
-                        dismiss()
-                    }
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .background(theme.background)
-            .navigationTitle("Редактирование")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Сохранить") {
-                        var updated = task
-                        updated.title = title
-                        updated.notes = notes
-                        updated.date = taskDate
-                        updated.durationMinutes = duration
-                        updated.isAllDay = isAllDay
-                        updated.hasAlarm = hasAlarm
-                        updated.isInbox = isInbox
-                        updated.colorIndex = colorIndex
-                        updated.icon = icon
-                        updated.categoryId = selectedCategoryId
-                        updated.tagIds = Array(selectedTagIds)
-                        store.update(updated)
-                        CalendarSyncService.shared.addOrUpdateEvent(for: updated)
-                        dismiss()
-                    }
-                    .disabled(title.isEmpty)
-                }
-            }
-        }
-        .presentationDetents([.large])
-    }
-}
-
-#if os(iOS)
-struct ShareSheetView: UIViewControllerRepresentable {
-    let items: [Any]
-    
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: items, applicationActivities: nil)
-    }
-    
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-#endif
 
 // MARK: - Preview
 

@@ -1,6 +1,7 @@
 """Google OAuth и API (Calendar, Gmail)."""
 import secrets
 from pathlib import Path
+from typing import Optional
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -52,7 +53,7 @@ def exchange_code_for_token(code: str, redirect_uri: str, code_verifier: str) ->
     return True
 
 
-def get_credentials() -> Credentials | None:
+def get_credentials() -> Optional[Credentials]:
     """Возвращает сохранённые credentials или None, если не авторизован."""
     if not TOKEN_PATH.exists():
         return None

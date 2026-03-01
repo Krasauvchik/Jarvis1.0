@@ -26,38 +26,6 @@ protocol NutritionServiceProtocol: Service {
     func analyze(imageData: Data) async throws -> NutritionService.Result
 }
 
-/// Task repository protocol
-protocol TaskRepositoryProtocol: AnyObject {
-    var tasks: [PlannerTask] { get }
-    func add(_ task: PlannerTask)
-    func update(_ task: PlannerTask)
-    func delete(_ task: PlannerTask)
-    func save()
-    func load()
-}
-
-/// Cloud sync protocol
-protocol CloudSyncProtocol: AnyObject {
-    var isSyncing: Bool { get }
-    var lastSyncDate: Date? { get }
-    func forceSync()
-    func saveTasks(_ tasks: [PlannerTask])
-    func loadTasks() -> [PlannerTask]?
-}
-
-/// Network monitor protocol
-protocol NetworkMonitorProtocol: AnyObject {
-    var isConnected: Bool { get }
-    var connectionType: NetworkMonitor.ConnectionType { get }
-}
-
-/// AI manager protocol
-protocol AIManagerProtocol: AnyObject {
-    var selectedModel: AIModel { get set }
-    func extractTask(from input: String, referenceDate: Date) -> PlannerTask?
-    func generateAdvice(from tasks: [PlannerTask]) -> [String]
-}
-
 // MARK: - Conformance Extensions
 
 extension AuthService: AuthServiceProtocol {}

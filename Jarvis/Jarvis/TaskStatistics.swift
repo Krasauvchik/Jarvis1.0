@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Task statistics and progress visualization (inspired by Task-Sync-Pro)
 struct TaskStatisticsView: View {
+    @Environment(\.dependencies) private var dependencies
     @StateObject private var store = PlannerStore.shared
     @StateObject private var network = NetworkMonitor.shared
     @Environment(\.colorScheme) private var colorScheme

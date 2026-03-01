@@ -1,4 +1,4 @@
-#if !os(watchOS) && !os(macOS)
+#if !os(watchOS)
 import SwiftUI
 
 struct CalendarView: View {

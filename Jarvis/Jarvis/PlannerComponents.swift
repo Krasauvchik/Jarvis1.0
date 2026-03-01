@@ -1,5 +1,29 @@
 import SwiftUI
 
+// MARK: - Cached Formatters
+
+private enum CachedFormatters {
+    static let monthYearFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ru_RU")
+        f.dateFormat = "LLLL yyyy"
+        return f
+    }()
+    
+    static let weekdayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ru_RU")
+        f.dateFormat = "EEE"
+        return f
+    }()
+    
+    static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+}
+
 // MARK: - Structured-style Date Strip
 
 struct StructuredDateStrip: View {
@@ -69,10 +93,7 @@ struct StructuredDateStrip: View {
     }
     
     private var monthYearText: String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ru_RU")
-        formatter.dateFormat = "LLLL yyyy"
-        return formatter.string(from: selectedDay).capitalized
+        CachedFormatters.monthYearFormatter.string(from: selectedDay).capitalized
     }
     
     private var daysInRange: [Date] {
@@ -141,10 +162,7 @@ struct DateCell: View {
     }
     
     private var weekdayShort: String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ru_RU")
-        formatter.dateFormat = "EEE"
-        return String(formatter.string(from: day).prefix(2)).uppercased()
+        String(CachedFormatters.weekdayFormatter.string(from: day).prefix(2)).uppercased()
     }
     
     private var dayNumber: Int {
@@ -159,84 +177,121 @@ struct TaskBlockView: View {
     let color: Color
     let dayStart: Date
     let hourRowHeight: CGFloat
+    /// Отступ сверху сетки часов (чтобы блок совпадал со строкой по времени)
+    var timelineTopPadding: CGFloat = 0
+    /// Час, с которого начинается таймлайн (например 6 → строки 06:00, 07:00, …)
+    var timelineStartHour: Int = 6
     let onTap: () -> Void
     let onToggle: () -> Void
     
-    @State private var isPressed = false
+    // MARK: - Static helpers for positioning
+    
+    /// Compute the Y offset for a task block within a timeline ZStack
+    static func computeOffset(
+        taskDate: Date,
+        dayStart: Date,
+        hourRowHeight: CGFloat,
+        timelineTopPadding: CGFloat = 0,
+        timelineStartHour: Int = 0
+    ) -> CGFloat {
+        let hoursFromDayStart = taskDate.timeIntervalSince(dayStart) / 3600
+        let rowOffset = max(0, hoursFromDayStart - Double(timelineStartHour))
+        return timelineTopPadding + CGFloat(rowOffset) * hourRowHeight
+    }
+    
+    /// Compute block height based on duration
+    static func computeHeight(durationMinutes: Int, hourRowHeight: CGFloat) -> CGFloat {
+        let minutes = durationMinutes > 0 ? durationMinutes : 60
+        return max(36, CGFloat(minutes) / 60 * hourRowHeight)
+    }
     
     var body: some View {
-        let startOffset = max(0, task.date.timeIntervalSince(dayStart) / 3600 * hourRowHeight)
-        let height = max(36, CGFloat(task.durationMinutes) / 60 * hourRowHeight)
+        let startOffset = Self.computeOffset(
+            taskDate: task.date,
+            dayStart: dayStart,
+            hourRowHeight: hourRowHeight,
+            timelineTopPadding: timelineTopPadding,
+            timelineStartHour: timelineStartHour
+        )
+        let height = Self.computeHeight(durationMinutes: task.durationMinutes, hourRowHeight: hourRowHeight)
         
-        Button(action: onTap) {
-            HStack(spacing: 10) {
-                // Left color bar
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(color)
-                    .frame(width: 4)
-                
-                // Checkbox
-                Button(action: onToggle) {
-                    ZStack {
-                        Circle()
-                            .strokeBorder(task.isCompleted ? color : JarvisTheme.textTertiary, lineWidth: 2)
-                            .frame(width: 22, height: 22)
-                        
-                        if task.isCompleted {
-                            Circle()
-                                .fill(color)
-                                .frame(width: 14, height: 14)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                
-                // Content
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(task.title)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(task.isCompleted ? JarvisTheme.textTertiary : JarvisTheme.textPrimary)
-                        .strikethrough(task.isCompleted, color: JarvisTheme.textTertiary)
-                        .lineLimit(2)
+        HStack(spacing: 10) {
+            // Left color bar
+            RoundedRectangle(cornerRadius: 2)
+                .fill(color)
+                .frame(width: 4)
+            
+            // Checkbox
+            Button(action: onToggle) {
+                ZStack {
+                    Circle()
+                        .strokeBorder(task.isCompleted ? color : JarvisTheme.textTertiary, lineWidth: 2)
+                        .frame(width: 22, height: 22)
                     
-                    if !task.notes.isEmpty && height > 50 {
-                        Text(task.notes)
-                            .font(.caption)
-                            .foregroundStyle(JarvisTheme.textTertiary)
-                            .lineLimit(1)
+                    if task.isCompleted {
+                        Circle()
+                            .fill(color)
+                            .frame(width: 14, height: 14)
                     }
                 }
+            }
+            .buttonStyle(.plain)
+            
+            // Content
+            VStack(alignment: .leading, spacing: 2) {
+                Text(task.title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(task.isCompleted ? JarvisTheme.textTertiary : JarvisTheme.textPrimary)
+                    .strikethrough(task.isCompleted, color: JarvisTheme.textTertiary)
+                    .lineLimit(2)
                 
-                Spacer(minLength: 0)
-                
-                // Time
+                if !task.notes.isEmpty && height > 50 {
+                    Text(task.notes)
+                        .font(.caption)
+                        .foregroundStyle(JarvisTheme.textTertiary)
+                        .lineLimit(1)
+                }
+            }
+            
+            Spacer(minLength: 0)
+            
+            // Время начала и длительность
+            VStack(alignment: .trailing, spacing: 2) {
                 Text(timeText)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(JarvisTheme.textTertiary)
+                Text(durationText)
+                    .font(.caption2)
+                    .foregroundStyle(JarvisTheme.textTertiary.opacity(0.9))
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: height - 4)
-            .background(
-                RoundedRectangle(cornerRadius: JarvisTheme.Dimensions.taskBlockRadius, style: .continuous)
-                    .fill(JarvisTheme.cardBackground)
-                    .shadow(color: JarvisTheme.cardShadow, radius: isPressed ? 2 : 4, x: 0, y: isPressed ? 1 : 2)
-            )
-            .scaleEffect(isPressed ? 0.98 : 1)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: height - 4)
+        .background(
+            RoundedRectangle(cornerRadius: JarvisTheme.Dimensions.taskBlockRadius, style: .continuous)
+                .fill(JarvisTheme.cardBackground)
+                .shadow(color: JarvisTheme.cardShadow, radius: 4, x: 0, y: 2)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(task.title), \(timeText), \(durationText)\(task.isCompleted ? ", выполнена" : "")")
+        .accessibilityHint("Нажмите для редактирования")
         .offset(y: startOffset + 2)
-        .animation(.spring(response: 0.2), value: isPressed)
-        .onLongPressGesture(minimumDuration: 0.1, pressing: { pressing in
-            isPressed = pressing
-        }, perform: {})
     }
     
     private var timeText: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: task.date)
+        CachedFormatters.timeFormatter.string(from: task.date)
+    }
+    
+    private var durationText: String {
+        let min = task.durationMinutes > 0 ? task.durationMinutes : 60
+        if min >= 60 && min % 60 == 0 {
+            return "\(min / 60) ч"
+        }
+        return "\(min) мин"
     }
 }
 
@@ -291,6 +346,8 @@ struct AllDayTaskRow: View {
                 .fill(JarvisTheme.cardBackground)
                 .shadow(color: JarvisTheme.cardShadow, radius: 3, x: 0, y: 1)
         )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Задача на весь день: \(task.title)\(task.isCompleted ? ", выполнена" : "")")
     }
 }
 
@@ -356,6 +413,9 @@ struct InboxTaskRow: View {
         )
         .contentShape(Rectangle())
         .onTapGesture(perform: onEdit)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Inbox: \(task.title)\(task.isCompleted ? ", выполнена" : "")")
+        .accessibilityHint("Нажмите для редактирования")
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive, action: onDelete) {
                 Label("Удалить", systemImage: "trash")
@@ -384,6 +444,7 @@ struct FloatingAddButton: View {
         }
         .buttonStyle(.plain)
         .bounceOnTap()
+        .accessibilityLabel("Добавить задачу")
     }
 }
 
@@ -511,10 +572,3 @@ struct StructuredSecondaryButtonStyle: ButtonStyle {
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }
-
-// MARK: - Legacy aliases
-
-typealias DateStripCell = DateCell
-typealias TimelineBlockView = TaskBlockView
-typealias TimelineAllDayRow = AllDayTaskRow
-typealias InboxRow = InboxTaskRow
