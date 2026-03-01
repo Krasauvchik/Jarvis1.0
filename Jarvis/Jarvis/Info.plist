@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
+
+	<!-- iOS / macOS privacy usage descriptions -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Микрофон используется для голосового ввода задач и напоминаний.</string>
+
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Распознавание речи используется для преобразования вашего голоса в задачи и напоминания.</string>
+
+	<!-- macOS: уведомления через UNUserNotificationCenter -->
+	<key>NSUserNotificationUsageDescription</key>
+	<string>Уведомления используются для напоминаний и будильников планнера.</string>
+
+	<!-- Разрешить HTTP к бэкенду Jarvis -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>158.160.48.202</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+			<key>jarvis-app.mooo.com</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+</dict>
+</plist>
