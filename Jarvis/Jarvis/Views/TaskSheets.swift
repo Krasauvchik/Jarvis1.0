@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Add Task Sheet
 
@@ -20,6 +21,8 @@ struct AddTaskSheet: View {
     @State private var selectedCategoryId: UUID?
     @State private var selectedTagIds: Set<UUID> = []
     @State private var priority: TaskPriority = .medium
+    @State private var attachments: [TaskAttachment] = []
+    @State private var showFileImporter = false
 
     init(date: Date, theme: JarvisTheme) {
         self.date = date
@@ -113,6 +116,8 @@ struct AddTaskSheet: View {
                                 .fill(theme.cardBackground)
                         )
                         .padding(.horizontal, 16)
+
+                        attachmentsSection
                     }
                     .padding(.top, 16)
                 }
@@ -140,12 +145,121 @@ struct AddTaskSheet: View {
             .background(theme.background)
         }
         .presentationDetents([.large])
+        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.item]) { result in
+            handleFileImport(result: result)
+        }
     }
     
     @State private var showIconPickerExpanded = false
     
     private var taskColor: Color {
         JarvisTheme.taskColors[colorIndex % JarvisTheme.taskColors.count]
+    }
+
+    private var attachmentsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(L10n.attachmentsTitle)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.textSecondary)
+                Spacer()
+                Button {
+                    showFileImporter = true
+                } label: {
+                    Image(systemName: "paperclip")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(JarvisTheme.accent)
+                }
+                .buttonStyle(.plain)
+                .bounceOnTap()
+            }
+
+            if attachments.isEmpty {
+                Text(L10n.noAttachments)
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.textTertiary)
+            } else {
+                ForEach(attachments, id: \.id) { attachment in
+                    HStack(spacing: 8) {
+                        Image(systemName: attachment.type == .image ? "photo" : "doc")
+                            .font(.system(size: 14))
+                            .foregroundColor(JarvisTheme.accent)
+                        Text(attachment.fileName)
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.textPrimary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button {
+                            attachments.removeAll { $0.id == attachment.id }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 14))
+                                .foregroundColor(theme.textTertiary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
+        )
+        .padding(.horizontal, 16)
+    }
+
+    private func handleFileImport(result: Result<URL, Error>) {
+        switch result {
+        case .failure(let error):
+            Logger.shared.error("File import failed: \(error.localizedDescription)")
+        case .success(let url):
+            addAttachment(from: url)
+        }
+    }
+
+    private func addAttachment(from url: URL) {
+        let fileManager = FileManager.default
+        let docsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first
+        guard let baseURL = docsURL else { return }
+
+        let attachmentsDir = baseURL.appendingPathComponent("TaskAttachments", isDirectory: true)
+        if !fileManager.fileExists(atPath: attachmentsDir.path) {
+            try? fileManager.createDirectory(at: attachmentsDir, withIntermediateDirectories: true)
+        }
+
+        let destinationURL = attachmentsDir.appendingPathComponent("\(UUID().uuidString)_\(url.lastPathComponent)")
+        do {
+            if url.startAccessingSecurityScopedResource() {
+                defer { url.stopAccessingSecurityScopedResource() }
+                if fileManager.fileExists(atPath: destinationURL.path) {
+                    try? fileManager.removeItem(at: destinationURL)
+                }
+                try fileManager.copyItem(at: url, to: destinationURL)
+            } else {
+                if fileManager.fileExists(atPath: destinationURL.path) {
+                    try? fileManager.removeItem(at: destinationURL)
+                }
+                try fileManager.copyItem(at: url, to: destinationURL)
+            }
+        } catch {
+            Logger.shared.error("Failed to copy attachment: \(error.localizedDescription)")
+        }
+
+        let resourceValues = try? destinationURL.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey])
+        let isImage = resourceValues?.contentType?.conforms(to: .image) ?? false
+        let type: TaskAttachment.AttachmentType = isImage ? .image : .file
+        let size = resourceValues?.fileSize.map { Int64($0) }
+
+        let attachment = TaskAttachment(
+            type: type,
+            fileName: url.lastPathComponent,
+            filePath: destinationURL.path,
+            fileSize: size
+        )
+        attachments.append(attachment)
     }
     
     private func addAndDismiss() {
@@ -161,7 +275,8 @@ struct AddTaskSheet: View {
             icon: icon,
             categoryId: selectedCategoryId,
             tagIds: Array(selectedTagIds),
-            priority: priority
+            priority: priority,
+            attachments: attachments
         )
         withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) {
             store.add(task)
@@ -359,6 +474,8 @@ struct EditTaskSheet: View {
     @State private var showTimePicker = false
     @State private var showColorPicker = false
     @State private var showIconPicker = false
+    @State private var attachments: [TaskAttachment]
+    @State private var showFileImporter = false
 
     init(task: PlannerTask, theme: JarvisTheme) {
         self.task = task
@@ -376,6 +493,7 @@ struct EditTaskSheet: View {
         self._selectedTagIds = State(initialValue: Set(task.tagIds))
         self._priority = State(initialValue: task.priority)
         self._isCompleted = State(initialValue: task.isCompleted)
+        self._attachments = State(initialValue: task.attachments)
     }
     
     private var taskColor: Color {
@@ -625,6 +743,8 @@ struct EditTaskSheet: View {
                             .fill(theme.cardBackground)
                     )
                     .padding(.horizontal, 16)
+
+                    attachmentsSection
                     
                     // Color picker (expandable)
                     if showColorPicker {
@@ -758,6 +878,116 @@ struct EditTaskSheet: View {
         .background(theme.background)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .presentationDetents([.large])
+        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.item]) { result in
+            handleFileImport(result: result)
+        }
+    }
+    
+    // MARK: - Attachments
+    
+    private var attachmentsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(L10n.attachmentsTitle)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.textSecondary)
+                Spacer()
+                Button {
+                    showFileImporter = true
+                } label: {
+                    Image(systemName: "paperclip")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(JarvisTheme.accent)
+                }
+                .buttonStyle(.plain)
+            }
+
+            if attachments.isEmpty {
+                Text(L10n.noAttachments)
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.textTertiary)
+            } else {
+                ForEach(attachments, id: \.id) { attachment in
+                    HStack(spacing: 8) {
+                        Image(systemName: attachment.type == .image ? "photo" : "doc")
+                            .font(.system(size: 14))
+                            .foregroundColor(JarvisTheme.accent)
+                        Text(attachment.fileName)
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.textPrimary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button {
+                            attachments.removeAll { $0.id == attachment.id }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 14))
+                                .foregroundColor(theme.textTertiary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
+        )
+        .padding(.horizontal, 16)
+    }
+
+    private func handleFileImport(result: Result<URL, Error>) {
+        switch result {
+        case .failure(let error):
+            Logger.shared.error("File import failed: \(error.localizedDescription)")
+        case .success(let url):
+            addAttachment(from: url)
+        }
+    }
+
+    private func addAttachment(from url: URL) {
+        let fileManager = FileManager.default
+        let docsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first
+        guard let baseURL = docsURL else { return }
+
+        let attachmentsDir = baseURL.appendingPathComponent("TaskAttachments", isDirectory: true)
+        if !fileManager.fileExists(atPath: attachmentsDir.path) {
+            try? fileManager.createDirectory(at: attachmentsDir, withIntermediateDirectories: true)
+        }
+
+        let destinationURL = attachmentsDir.appendingPathComponent("\(UUID().uuidString)_\(url.lastPathComponent)")
+        do {
+            if url.startAccessingSecurityScopedResource() {
+                defer { url.stopAccessingSecurityScopedResource() }
+                if fileManager.fileExists(atPath: destinationURL.path) {
+                    try? fileManager.removeItem(at: destinationURL)
+                }
+                try fileManager.copyItem(at: url, to: destinationURL)
+            } else {
+                if fileManager.fileExists(atPath: destinationURL.path) {
+                    try? fileManager.removeItem(at: destinationURL)
+                }
+                try fileManager.copyItem(at: url, to: destinationURL)
+            }
+        } catch {
+            Logger.shared.error("Failed to copy attachment: \(error.localizedDescription)")
+        }
+
+        let resourceValues = try? destinationURL.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey])
+        let isImage = resourceValues?.contentType?.conforms(to: .image) ?? false
+        let type: TaskAttachment.AttachmentType = isImage ? .image : .file
+        let size = resourceValues?.fileSize.map { Int64($0) }
+
+        let attachment = TaskAttachment(
+            type: type,
+            fileName: url.lastPathComponent,
+            filePath: destinationURL.path,
+            fileSize: size
+        )
+        attachments.append(attachment)
     }
     
     private func saveAndDismiss() {
@@ -775,6 +1005,7 @@ struct EditTaskSheet: View {
         updated.tagIds = Array(selectedTagIds)
         updated.priority = priority
         updated.isCompleted = isCompleted
+        updated.attachments = attachments
         store.update(updated)
         if hasAlarm {
             NotificationManager.shared.scheduleAlarm(for: updated)

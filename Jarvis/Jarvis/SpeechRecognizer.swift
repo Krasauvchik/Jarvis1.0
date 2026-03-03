@@ -50,7 +50,7 @@ final class SpeechRecognizer: NSObject, ObservableObject {
             audioEngine.prepare()
             try audioEngine.start()
         } catch {
-            errorMessage = "Ошибка аудио: \(error.localizedDescription)"
+            errorMessage = "\(L10n.speechAudioError): \(error.localizedDescription)"
             stop()
             return
         }
@@ -119,7 +119,7 @@ final class SpeechRecognizer: NSObject, ObservableObject {
     
     func start() {
         guard !isRecording, let recognizer, recognizer.isAvailable else {
-            errorMessage = "Распознавание речи недоступно"
+            errorMessage = L10n.speechUnavailable
             return
         }
         
@@ -142,7 +142,7 @@ final class SpeechRecognizer: NSObject, ObservableObject {
             audioEngine.prepare()
             try audioEngine.start()
         } catch {
-            errorMessage = "Ошибка аудио: \(error.localizedDescription)"
+            errorMessage = "\(L10n.speechAudioError): \(error.localizedDescription)"
             stop()
             return
         }

@@ -9,6 +9,10 @@ enum L10n {
     private static func _s(_ key: String) -> String {
         LanguageManager.shared.localizedString(key)
     }
+    /// Format string helper: resolves key then applies String(format:...)
+    private static func _f(_ key: String, _ args: CVarArg...) -> String {
+        String(format: _s(key), arguments: args)
+    }
     
     // MARK: - Tabs
     static var tabToday: String { _s("tab_today") }
@@ -717,6 +721,178 @@ enum L10n {
     static var shareWebOpened: String { _s("share_web_opened") }
     static var shareNotInstalled: String { _s("share_not_installed") }
     
+    // MARK: - Attachments
+    static var attachmentsTitle: String { _s("attachments_title") }
+    static var noAttachments: String { _s("no_attachments") }
+    static var noCategoriesHint: String { _s("no_categories_hint") }
+    
     // MARK: - Food Fallback
     static var defaultDish: String { _s("default_dish") }
+    
+    // MARK: - Priority (new)
+    static var priorityUrgent: String { _s("priority_urgent") }
+    
+    // MARK: - Recurrence (intervals)
+    static var recurrenceEveryDays: String { _s("recurrence_every_days") }
+    static var recurrenceEveryWeeks: String { _s("recurrence_every_weeks") }
+    static var recurrenceEveryMonths: String { _s("recurrence_every_months") }
+    static var recurrenceEveryYears: String { _s("recurrence_every_years") }
+    
+    // MARK: - Reminders
+    static var reminderAtStart: String { _s("reminder_at_start") }
+    static var reminderMinBefore: String { _s("reminder_min_before") }
+    static var reminderHourBefore: String { _s("reminder_hour_before") }
+    static var reminderHoursBefore: String { _s("reminder_hours_before") }
+    static var reminderDaysBefore: String { _s("reminder_days_before") }
+    static var reminderDefault: String { _s("reminder_default") }
+    
+    // MARK: - Relative Dates
+    static var dateToday: String { _s("date_today") }
+    static var dateTomorrow: String { _s("date_tomorrow") }
+    static var dateYesterday: String { _s("date_yesterday") }
+    
+    // MARK: - Accessibility
+    static var accessBack: String { _s("access_back") }
+    static var accessForward: String { _s("access_forward") }
+    static var accessCurrentTime: String { _s("access_current_time") }
+    static var accessVoiceCommand: String { _s("access_voice_command") }
+    static var accessVoiceHint: String { _s("access_voice_hint") }
+    
+    // MARK: - Speech
+    static var speechAudioError: String { _s("speech_audio_error") }
+    static var speechUnavailable: String { _s("speech_unavailable") }
+    
+    // MARK: - Errors
+    static var errorGeneric: String { _s("error_generic") }
+    static var errorNoNetwork: String { _s("error_no_network") }
+    
+    // MARK: - Notifications
+    static var notificationReminder: String { _s("notification_reminder") }
+    
+    // MARK: - AI Coach (new)
+    static var coachFinance: String { _s("coach_finance") }
+    static var coachHobby: String { _s("coach_hobby") }
+    static var coachFailed: String { _s("coach_failed") }
+    
+    // MARK: - AI Messages
+    static var aiOfflineHeuristic: String { _s("ai_offline_heuristic") }
+    static var aiServerError: String { _s("ai_server_error") }
+    static var aiCannotConnect: String { _s("ai_cannot_connect") }
+    static var aiNoNetwork: String { _s("ai_no_network") }
+    static var aiBackendUnavailable: String { _s("ai_backend_unavailable") }
+    static var aiOfflineProcessError: String { _s("ai_offline_process_error") }
+    static var aiBriefingFailed: String { _s("ai_briefing_failed") }
+    static var aiNoTasks: String { _s("ai_no_tasks") }
+    
+    // MARK: - Network Errors
+    static var errNetNoConnection: String { _s("err_net_no_connection") }
+    static var errNetInvalidURL: String { _s("err_net_invalid_url") }
+    static var errNetInvalidResponse: String { _s("err_net_invalid_response") }
+    static func errNetHttpError(_ code: Int, _ message: String) -> String { _f("err_net_http_error", code, message) }
+    static var errNetDecodingError: String { _s("err_net_decoding_error") }
+    static var errNetTimeout: String { _s("err_net_timeout") }
+    static func errNetServerError(_ message: String) -> String { _f("err_net_server_error", message) }
+    static var errNetUnauthorized: String { _s("err_net_unauthorized") }
+    static var errUnknownError: String { _s("err_unknown_error") }
+    
+    // MARK: - Recovery Suggestions
+    static var recoveryCheckInternet: String { _s("recovery_check_internet") }
+    static var recoveryServerTimeout: String { _s("recovery_server_timeout") }
+    static var recoveryRelogin: String { _s("recovery_relogin") }
+    static var recoverySyncConflict: String { _s("recovery_sync_conflict") }
+    static var recoveryDefault: String { _s("recovery_default") }
+    
+    // MARK: - Sync Errors
+    static var errSyncConflict: String { _s("err_sync_conflict") }
+    static var errSyncDataCorrupted: String { _s("err_sync_data_corrupted") }
+    static var errSyncCloudUnavailable: String { _s("err_sync_cloud_unavailable") }
+    static var errSyncQuotaExceeded: String { _s("err_sync_quota_exceeded") }
+    
+    // MARK: - Validation Errors
+    static var errValEmptyTitle: String { _s("err_val_empty_title") }
+    static var errValInvalidDate: String { _s("err_val_invalid_date") }
+    static var errValInvalidDuration: String { _s("err_val_invalid_duration") }
+    static var errValTooManyTasks: String { _s("err_val_too_many_tasks") }
+    
+    // MARK: - Storage Errors
+    static var errStorageSaveFailed: String { _s("err_storage_save_failed") }
+    static var errStorageLoadFailed: String { _s("err_storage_load_failed") }
+    static var errStorageMigrationFailed: String { _s("err_storage_migration_failed") }
+    static var errStorageInsufficientSpace: String { _s("err_storage_insufficient_space") }
+    
+    // MARK: - Auth Errors
+    static var errAuthUnauthorized: String { _s("err_auth_unauthorized") }
+    static var errAuthTokenExpired: String { _s("err_auth_token_expired") }
+    static var errAuthAccountNotFound: String { _s("err_auth_account_not_found") }
+    static var errAuthPermissionDenied: String { _s("err_auth_permission_denied") }
+    
+    // MARK: - AI Errors
+    static var errAIModelUnavailable: String { _s("err_ai_model_unavailable") }
+    static var errAIInputTooLong: String { _s("err_ai_input_too_long") }
+    static var errAIRateLimited: String { _s("err_ai_rate_limited") }
+    static var errAIProcessingFailed: String { _s("err_ai_processing_failed") }
+    
+    // MARK: - Error Alert
+    static var alertErrorTitle: String { _s("alert_error_title") }
+    static var alertRetry: String { _s("alert_retry") }
+    
+    // MARK: - Validators
+    static var valTaskTitleEmpty: String { _s("val_task_title_empty") }
+    static var valTaskTitleTooLong: String { _s("val_task_title_too_long") }
+    static var valDurationTooShort: String { _s("val_duration_too_short") }
+    static var valDurationTooLong: String { _s("val_duration_too_long") }
+    static var valNotesTooLong: String { _s("val_notes_too_long") }
+    static var valMealTitleEmpty: String { _s("val_meal_title_empty") }
+    static var valCaloriesNegative: String { _s("val_calories_negative") }
+    static var valCaloriesTooHigh: String { _s("val_calories_too_high") }
+    static var valSleepEndBeforeStart: String { _s("val_sleep_end_before_start") }
+    static var valSleepTooLong: String { _s("val_sleep_too_long") }
+    static var valActivityTitleEmpty: String { _s("val_activity_title_empty") }
+    static var valActivityDurationNegative: String { _s("val_activity_duration_negative") }
+    static var valActivityDurationTooLong: String { _s("val_activity_duration_too_long") }
+    
+    // MARK: - Voice Command Responses
+    static var voiceEventCreated: String { _s("voice_event_created") }
+    static var voiceEmailSent: String { _s("voice_email_sent") }
+    static var voiceCalendarLoaded: String { _s("voice_calendar_loaded") }
+    static var voiceMailLoaded: String { _s("voice_mail_loaded") }
+    static var voiceBriefingReady: String { _s("voice_briefing_ready") }
+    static var voiceCrossSearchDone: String { _s("voice_cross_search_done") }
+    static var voiceCoachReady: String { _s("voice_coach_ready") }
+    static func voiceTaskDelegated(_ assignee: String) -> String { _f("voice_task_delegated", assignee) }
+    static var voiceNewTaskDefault: String { _s("voice_new_task_default") }
+    static func voiceTaskCreated(_ title: String, _ date: String) -> String { _f("voice_task_created", title, date) }
+    static var voiceNoTaskNameComplete: String { _s("voice_no_task_name_complete") }
+    static func voiceTaskCompleted(_ title: String) -> String { _f("voice_task_completed", title) }
+    static func voiceTaskNotFound(_ title: String) -> String { _f("voice_task_not_found", title) }
+    static var voiceNoTaskNameDelete: String { _s("voice_no_task_name_delete") }
+    static func voiceTaskDeleted(_ title: String) -> String { _f("voice_task_deleted", title) }
+    static var voiceNoTaskNameReschedule: String { _s("voice_no_task_name_reschedule") }
+    static var voiceNoNewDate: String { _s("voice_no_new_date") }
+    static func voiceTaskRescheduled(_ title: String, _ date: String) -> String { _f("voice_task_rescheduled", title, date) }
+    static var voiceNoTaskNameMove: String { _s("voice_no_task_name_move") }
+    static var voiceNoTargetFolder: String { _s("voice_no_target_folder") }
+    static func voiceTaskMoved(_ title: String, _ folder: String) -> String { _f("voice_task_moved", title, folder) }
+    
+    // MARK: - AI Model Display Names
+    static var aiModelHeuristic: String { _s("ai_model_heuristic") }
+    static var aiModelOllamaLocal: String { _s("ai_model_ollama_local") }
+    static var aiModelOnDevice: String { _s("ai_model_on_device") }
+    
+    // MARK: - Heuristic Advice
+    static var heuristicDefaultTask: String { _s("heuristic_default_task") }
+    static var adviceMorning: String { _s("advice_morning") }
+    static var adviceMidMorning: String { _s("advice_mid_morning") }
+    static var adviceAfternoon: String { _s("advice_afternoon") }
+    static var adviceEvening: String { _s("advice_evening") }
+    static var adviceNight: String { _s("advice_night") }
+    static var adviceNoTasks: String { _s("advice_no_tasks") }
+    static var adviceFewTasks: String { _s("advice_few_tasks") }
+    static var adviceBusyDay: String { _s("advice_busy_day") }
+    static var adviceTooManyTasks: String { _s("advice_too_many_tasks") }
+    
+    // MARK: - Briefing / Digest Fallbacks
+    static func briefingAIUnavailable(_ data: String) -> String { _f("briefing_ai_unavailable", data) }
+    static var digestBriefSummary: String { _s("digest_brief_summary") }
+    static var digestLLMUnavailable: String { _s("digest_llm_unavailable") }
 }

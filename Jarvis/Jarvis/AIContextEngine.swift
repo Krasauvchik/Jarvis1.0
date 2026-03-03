@@ -267,7 +267,7 @@ final class AIContextEngine: ObservableObject {
         }
         
         if result.totalMatches == 0 {
-            text += "Ничего не найдено по данному запросу.\n"
+            text += L10n.nothingFound + "\n"
         }
         
         return text

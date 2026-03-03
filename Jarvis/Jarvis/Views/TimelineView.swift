@@ -136,7 +136,7 @@ struct TimelinePanelView: View {
                     .frame(width: 32, height: 32)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Назад")
+            .accessibilityLabel(L10n.accessBack)
             
             Rectangle()
                 .fill(theme.divider)
@@ -149,7 +149,7 @@ struct TimelinePanelView: View {
                     .frame(width: 32, height: 32)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Вперёд")
+            .accessibilityLabel(L10n.accessForward)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
@@ -279,7 +279,7 @@ struct TimelinePanelView: View {
                 .padding(.leading, 56)
                 .padding(.trailing, 20)
                 .zIndex(50)
-                .accessibilityLabel("Текущее время")
+                .accessibilityLabel(L10n.accessCurrentTime)
             }
             
             // Task blocks

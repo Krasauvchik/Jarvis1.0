@@ -12,9 +12,9 @@ enum AIModel: String, CaseIterable, Identifiable, Codable, Sendable {
     var displayName: String {
         switch self {
         case .gemini: return "Gemini"
-        case .heuristic: return "Эвристика"
-        case .ollama: return "Ollama (локально)"
-        case .onDeviceLarge: return "На устройстве"
+        case .heuristic: return L10n.aiModelHeuristic
+        case .ollama: return L10n.aiModelOllamaLocal
+        case .onDeviceLarge: return L10n.aiModelOnDevice
         case .cloudGPT: return "Cloud GPT"
         }
     }
@@ -59,7 +59,7 @@ final class HeuristicAdapter: Sendable {
             .replacingOccurrences(of: #"(?:в|at)\s*\d{1,2}(?::\d{2})?"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         
-        if title.isEmpty { title = "Задача" }
+        if title.isEmpty { title = L10n.heuristicDefaultTask }
         
         return PlannerTask(
             title: title.prefix(1).uppercased() + title.dropFirst(),
@@ -77,18 +77,18 @@ final class HeuristicAdapter: Sendable {
         var advice: [String] = []
         
         switch hour {
-        case 0..<9: advice.append("Доброе утро! Начни день с лёгкого завтрака.")
-        case 9..<12: advice.append("Утро — лучшее время для сложных задач.")
-        case 12..<17: advice.append("Не забывай пить воду и делать перерывы.")
-        case 17..<21: advice.append("Вечер — время подвести итоги дня.")
-        default: advice.append("Пора готовиться ко сну.")
+        case 0..<9: advice.append(L10n.adviceMorning)
+        case 9..<12: advice.append(L10n.adviceMidMorning)
+        case 12..<17: advice.append(L10n.adviceAfternoon)
+        case 17..<21: advice.append(L10n.adviceEvening)
+        default: advice.append(L10n.adviceNight)
         }
         
         switch count {
-        case 0: advice.append("Сегодня нет задач — отличный день для отдыха.")
-        case 1...3: advice.append("Немного задач — планируй время эффективно.")
-        case 4...6: advice.append("Насыщенный день — расставь приоритеты.")
-        default: advice.append("Много задач — делегируй или перенеси часть.")
+        case 0: advice.append(L10n.adviceNoTasks)
+        case 1...3: advice.append(L10n.adviceFewTasks)
+        case 4...6: advice.append(L10n.adviceBusyDay)
+        default: advice.append(L10n.adviceTooManyTasks)
         }
         
         return advice

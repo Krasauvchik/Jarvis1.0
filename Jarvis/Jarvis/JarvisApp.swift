@@ -82,36 +82,36 @@ struct JarvisApp: App {
     @CommandsBuilder
     private var jarvisCommands: some Commands {
         CommandGroup(after: .newItem) {
-            Button("Новая задача") {
+            Button(L10n.addTask) {
                 deepLinkManager.handle(URL(string: "jarvis://add")!)
             }
             .keyboardShortcut("n", modifiers: .command)
             
             Divider()
             
-            Button("Сегодня") {
+            Button(L10n.sectionToday) {
                 deepLinkManager.handle(URL(string: "jarvis://today")!)
             }
             .keyboardShortcut("d", modifiers: .command)
             
-            Button("Входящие") {
+            Button(L10n.sectionInbox) {
                 deepLinkManager.handle(URL(string: "jarvis://inbox")!)
             }
             .keyboardShortcut("i", modifiers: .command)
             
-            Button("Аналитика") {
+            Button(L10n.sectionAnalytics) {
                 deepLinkManager.handle(URL(string: "jarvis://analytics")!)
             }
             .keyboardShortcut("a", modifiers: [.command, .shift])
             
-            Button("AI Чат") {
+            Button(L10n.sectionNeural) {
                 deepLinkManager.handle(URL(string: "jarvis://chat")!)
             }
             .keyboardShortcut("l", modifiers: .command)
         }
         
         CommandGroup(after: .sidebar) {
-            Button("Переключить боковую панель") {
+            Button(L10n.hideSidebar) {
                 NotificationCenter.default.post(name: .toggleSidebar, object: nil)
             }
             .keyboardShortcut("s", modifiers: [.command, .control])

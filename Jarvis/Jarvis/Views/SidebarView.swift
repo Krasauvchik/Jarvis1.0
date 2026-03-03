@@ -33,9 +33,9 @@ enum AppMode: String, CaseIterable, Identifiable {
     var visibleSections: [NavigationSection] {
         switch self {
         case .work:
-            return [.inbox, .today, .scheduled, .futurePlans, .completed, .all, .calendarSection, .mailSection, .messengers, .analytics, .projects, .chat]
+            return [.inbox, .today, .scheduled, .completed, .all, .calendarSection, .mailSection, .messengers, .analytics, .projects, .chat]
         case .personal:
-            return [.today, .health, .scheduled, .completed, .calendarSection]
+            return [.today, .health, .futurePlans, .scheduled, .completed, .calendarSection]
         }
     }
 }
@@ -119,6 +119,7 @@ enum NavigationSection: String, CaseIterable, Identifiable {
 struct SidebarView: View {
     let theme: JarvisTheme
     @Binding var selectedSection: NavigationSection
+    @Binding var selectedCategoryId: UUID?
     @Binding var appMode: AppMode
     @ObservedObject var store: PlannerStore
     let onHide: () -> Void
@@ -127,6 +128,8 @@ struct SidebarView: View {
     let onShowProfile: () -> Void
     
     @StateObject private var userProfile = UserProfile.shared
+    @State private var showAddCategorySheet = false
+    @State private var editingCategory: TaskCategory?
     
     private var visibleSections: [NavigationSection] {
         appMode.visibleSections
@@ -208,29 +211,35 @@ struct SidebarView: View {
             
             Divider().background(theme.divider)
             
-            // Navigation Items
+            // Navigation Items + Custom Folders (Categories)
             ScrollView {
-                VStack(spacing: 4) {
-                    ForEach(Array(visibleSections.enumerated()), id: \.element.id) { index, section in
-                        SidebarNavigationRow(
-                            section: section,
-                            isSelected: selectedSection == section,
-                            count: taskCount(for: section),
-                            theme: theme,
-                            onSelect: {
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                                    selectedSection = section
+                VStack(spacing: 8) {
+                    VStack(spacing: 4) {
+                        ForEach(Array(visibleSections.enumerated()), id: \.element.id) { index, section in
+                            SidebarNavigationRow(
+                                section: section,
+                                isSelected: selectedSection == section,
+                                count: taskCount(for: section),
+                                theme: theme,
+                                onSelect: {
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                        selectedSection = section
+                                        selectedCategoryId = nil
+                                    }
+                                },
+                                onDrop: { taskID in
+                                    moveTask(taskID: taskID, to: section)
                                 }
-                            },
-                            onDrop: { taskID in
-                                moveTask(taskID: taskID, to: section)
-                            }
-                        )
-                        .animateOnAppear(delay: Double(index) * 0.04)
+                            )
+                            .animateOnAppear(delay: Double(index) * 0.04)
+                        }
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 12)
+
+                    categoriesSection
+                        .padding(.horizontal, 12)
                 }
-                .padding(.horizontal, 12)
-                .padding(.top, 12)
             }
             
             Spacer()
@@ -249,6 +258,9 @@ struct SidebarView: View {
             }
         }
         .background(theme.sidebarBackground)
+        .sheet(isPresented: $showAddCategorySheet) {
+            AddCategorySheet(theme: theme, category: editingCategory)
+        }
     }
     
     // MARK: - Private Helpers
@@ -326,6 +338,72 @@ struct SidebarView: View {
                 .fill(theme.cardBackground)
         )
     }
+
+    private var activeCategories: [TaskCategory] {
+        store.categories.filter { !$0.isArchived }.sorted { lhs, rhs in
+            if lhs.sortOrder == rhs.sortOrder {
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+            return lhs.sortOrder < rhs.sortOrder
+        }
+    }
+
+    private var categoriesSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(L10n.categoriesTitle)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.textSecondary)
+                Spacer()
+                Button {
+                    editingCategory = nil
+                    showAddCategorySheet = true
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(JarvisTheme.accent)
+                }
+                .buttonStyle(.plain)
+                .bounceOnTap()
+                .accessibilityLabel(L10n.newCategoryTitle)
+            }
+
+            if activeCategories.isEmpty {
+                Text(L10n.noCategoriesHint)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.textTertiary)
+            } else {
+                VStack(spacing: 4) {
+                    ForEach(activeCategories, id: \.id) { category in
+                        SidebarCategoryRow(
+                            category: category,
+                            isSelected: selectedCategoryId == category.id,
+                            theme: theme,
+                            onSelect: {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                    if selectedCategoryId == category.id {
+                                        selectedCategoryId = nil
+                                    } else {
+                                        selectedCategoryId = category.id
+                                    }
+                                }
+                            },
+                            onEdit: {
+                                editingCategory = category
+                                showAddCategorySheet = true
+                            },
+                            onDelete: {
+                                if selectedCategoryId == category.id {
+                                    selectedCategoryId = nil
+                                }
+                                store.removeCategory(category)
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
     
     private func taskCount(for section: NavigationSection) -> Int {
         store.taskCount(for: section)
@@ -335,6 +413,55 @@ struct SidebarView: View {
         withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) {
             store.moveTask(taskID: taskID, to: section)
         }
+    }
+}
+
+struct SidebarCategoryRow: View {
+    let category: TaskCategory
+    let isSelected: Bool
+    let theme: JarvisTheme
+    let onSelect: () -> Void
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 10) {
+                Image(systemName: category.icon)
+                    .font(.system(size: 13))
+                    .foregroundColor(isSelected ? .white : category.color)
+                    .frame(width: 24, height: 24)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(isSelected ? category.color : category.color.opacity(0.15))
+                    )
+
+                Text(category.name)
+                    .font(.system(size: 14, weight: isSelected ? .semibold : .medium))
+                    .foregroundColor(isSelected ? theme.textPrimary : theme.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+
+                Spacer(minLength: 4)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isSelected ? theme.cardBackground : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button(action: onEdit) {
+                Label(L10n.editAction, systemImage: "pencil")
+            }
+            Button(role: .destructive, action: onDelete) {
+                Label(L10n.deleteAction, systemImage: "trash")
+            }
+        }
+        .accessibilityLabel(category.name)
+        .bounceOnTap()
     }
 }
 

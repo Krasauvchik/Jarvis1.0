@@ -32,6 +32,7 @@ final class TaskEntity {
     var completedAt: Date?
     var sourceRaw: String
     var remindersData: Data?
+    var attachmentsData: Data?
     
     init(from task: PlannerTask) {
         self.taskID = task.id
@@ -58,6 +59,7 @@ final class TaskEntity {
         self.completedAt = task.completedAt
         self.sourceRaw = task.source.rawValue
         self.remindersData = try? JSONEncoder().encode(task.reminders)
+        self.attachmentsData = try? JSONEncoder().encode(task.attachments)
     }
     
     func toStruct() -> PlannerTask {
@@ -66,6 +68,7 @@ final class TaskEntity {
         let completedDates = (completedRecurrenceDatesData.flatMap { try? decoder.decode([Date].self, from: $0) }) ?? []
         let tagIds = (tagIdsData.flatMap { try? decoder.decode([UUID].self, from: $0) }) ?? []
         let reminders = (remindersData.flatMap { try? decoder.decode([TaskReminder].self, from: $0) }) ?? []
+        let attachments = (attachmentsData.flatMap { try? decoder.decode([TaskAttachment].self, from: $0) }) ?? []
         
         return PlannerTask(
             id: taskID,
@@ -91,7 +94,8 @@ final class TaskEntity {
             modifiedAt: modifiedAt,
             completedAt: completedAt,
             source: TaskSource(rawValue: sourceRaw) ?? .manual,
-            reminders: reminders
+            reminders: reminders,
+            attachments: attachments
         )
     }
     
@@ -119,6 +123,7 @@ final class TaskEntity {
         self.completedAt = task.completedAt
         self.sourceRaw = task.source.rawValue
         self.remindersData = try? JSONEncoder().encode(task.reminders)
+        self.attachmentsData = try? JSONEncoder().encode(task.attachments)
     }
 }
 

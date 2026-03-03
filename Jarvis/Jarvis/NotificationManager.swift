@@ -34,7 +34,7 @@ final class NotificationManager: NSObject, ObservableObject {
             
             let content = UNMutableNotificationContent()
             content.title = task.title
-            content.body = task.notes.isEmpty ? "Напоминание" : task.notes
+            content.body = task.notes.isEmpty ? L10n.notificationReminder : task.notes
             content.sound = .default
             content.userInfo = ["taskID": task.id.uuidString]
             

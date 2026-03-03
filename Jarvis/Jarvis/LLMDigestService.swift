@@ -339,11 +339,11 @@ final class LLMDigestService: ObservableObject {
     private func buildFallbackDigest(context: String) -> String {
         // Extract numbers from context for simple summary
         return """
-        📊 Краткая сводка:
+        \(L10n.digestBriefSummary)
         
         \(context)
         
-        ⚠️ LLM недоступна — показаны сырые данные. Запустите Ollama для AI-анализа.
+        \(L10n.digestLLMUnavailable)
         """
     }
 }

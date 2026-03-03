@@ -64,22 +64,22 @@ final class VoiceCommandExecutor: ObservableObject {
         case "move_task":
             return executeMoveTask(action.params)
         case "create_event":
-            return "📅 Событие в календаре создано на сервере"
+            return L10n.voiceEventCreated
         case "send_email":
-            return "📧 Письмо отправлено через сервер"
+            return L10n.voiceEmailSent
         case "show_calendar":
-            return "📅 Данные календаря получены"
+            return L10n.voiceCalendarLoaded
         case "show_mail":
-            return "📧 Почта загружена"
+            return L10n.voiceMailLoaded
         case "meeting_briefing":
-            return "📋 Выдержка по встрече подготовлена"
+            return L10n.voiceBriefingReady
         case "context_search":
-            return "🔍 Кросс-поиск по источникам завершён"
+            return L10n.voiceCrossSearchDone
         case "coaching":
-            return "💪 AI-коуч подготовил рекомендации"
+            return L10n.voiceCoachReady
         case "delegate_task":
-            let assignee = action.params["assignee"] ?? "пользователю"
-            return "📤 Задача делегирована \(assignee)"
+            let assignee = action.params["assignee"] ?? ""
+            return L10n.voiceTaskDelegated(assignee)
         case "advice":
             return ""
         case "none":
@@ -92,7 +92,7 @@ final class VoiceCommandExecutor: ObservableObject {
     // MARK: - Task operations
     
     private func executeCreateTask(_ params: [String: String]) -> String {
-        let title = params["title"] ?? "Новая задача"
+        let title = params["title"] ?? L10n.voiceNewTaskDefault
         let notes = params["notes"] ?? ""
         let priorityStr = params["priority"] ?? "medium"
         let priority = TaskPriority(rawValue: priorityStr) ?? .medium
@@ -129,75 +129,75 @@ final class VoiceCommandExecutor: ObservableObject {
         triggerHaptic(.success)
         
         let dateFormatted = taskDate.formatted(date: .abbreviated, time: .shortened)
-        return "✅ Создана задача: «\(title)» на \(dateFormatted)"
+        return L10n.voiceTaskCreated(title, dateFormatted)
     }
     
     private func executeCompleteTask(_ params: [String: String]) -> String {
         guard let searchTitle = params["title"]?.lowercased() else {
-            return "⚠️ Не указано название задачи для выполнения"
+            return L10n.voiceNoTaskNameComplete
         }
         
         if let task = findTask(byTitle: searchTitle) {
             store.toggleCompletion(task: task, onDay: nil)
             triggerHaptic(.success)
-            return "✅ Задача «\(task.title)» отмечена как выполненная"
+            return L10n.voiceTaskCompleted(task.title)
         }
         
-        return "⚠️ Задача «\(searchTitle)» не найдена"
+        return L10n.voiceTaskNotFound(searchTitle)
     }
     
     private func executeDeleteTask(_ params: [String: String]) -> String {
         guard let searchTitle = params["title"]?.lowercased() else {
-            return "⚠️ Не указано название задачи для удаления"
+            return L10n.voiceNoTaskNameDelete
         }
         
         if let task = findTask(byTitle: searchTitle) {
             store.delete(task)
             triggerHaptic(.warning)
-            return "🗑 Задача «\(task.title)» удалена"
+            return L10n.voiceTaskDeleted(task.title)
         }
         
-        return "⚠️ Задача «\(searchTitle)» не найдена"
+        return L10n.voiceTaskNotFound(searchTitle)
     }
     
     private func executeRescheduleTask(_ params: [String: String]) -> String {
         guard let searchTitle = params["title"]?.lowercased() else {
-            return "⚠️ Не указано название задачи для переноса"
+            return L10n.voiceNoTaskNameReschedule
         }
         
         guard let newDateStr = params["new_date"] ?? params["date"],
               let newDate = parseDate(newDateStr) else {
-            return "⚠️ Не указана новая дата"
+            return L10n.voiceNoNewDate
         }
         
         if var task = findTask(byTitle: searchTitle) {
             task.date = newDate
             store.update(task)
             triggerHaptic(.success)
-            return "📅 Задача «\(task.title)» перенесена на \(newDate.formatted(date: .abbreviated, time: .shortened))"
+            return L10n.voiceTaskRescheduled(task.title, newDate.formatted(date: .abbreviated, time: .shortened))
         }
         
-        return "⚠️ Задача «\(searchTitle)» не найдена"
+        return L10n.voiceTaskNotFound(searchTitle)
     }
     
     private func executeMoveTask(_ params: [String: String]) -> String {
         guard let searchTitle = params["title"]?.lowercased() else {
-            return "⚠️ Не указано название задачи для перемещения"
+            return L10n.voiceNoTaskNameMove
         }
         
         guard let folder = params["folder"]?.lowercased() else {
-            return "⚠️ Не указана папка назначения"
+            return L10n.voiceNoTargetFolder
         }
         
         guard let task = findTask(byTitle: searchTitle) else {
-            return "⚠️ Задача «\(searchTitle)» не найдена"
+            return L10n.voiceTaskNotFound(searchTitle)
         }
         
         // Map folder name to NavigationSection
         let section = mapFolderToSection(folder)
         store.moveTask(taskID: task.id, to: section)
         triggerHaptic(.success)
-        return "📁 Задача «\(task.title)» перемещена в «\(sectionDisplayName(section))»"
+        return L10n.voiceTaskMoved(task.title, sectionDisplayName(section))
     }
     
     // MARK: - Helpers

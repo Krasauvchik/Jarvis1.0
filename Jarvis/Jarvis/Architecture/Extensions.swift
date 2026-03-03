@@ -76,15 +76,14 @@ extension Date {
     
     private static let dayOfWeekFormatter: DateFormatter = {
         let f = DateFormatter()
-        f.locale = Locale(identifier: "ru_RU")
         f.dateFormat = "EE"
         return f
     }()
     
     var relativeDescription: String {
-        if isToday { return "Сегодня" }
-        if isTomorrow { return "Завтра" }
-        if isYesterday { return "Вчера" }
+        if isToday { return L10n.dateToday }
+        if isTomorrow { return L10n.dateTomorrow }
+        if isYesterday { return L10n.dateYesterday }
         return Self.relativeDateFormatter.string(from: self)
     }
     

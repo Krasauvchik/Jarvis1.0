@@ -7,10 +7,10 @@ enum TaskValidator {
     static func validateTitle(_ title: String) -> String? {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            return "Название задачи не может быть пустым"
+            return L10n.valTaskTitleEmpty
         }
         if trimmed.count > 500 {
-            return "Название слишком длинное (макс. 500 символов)"
+            return L10n.valTaskTitleTooLong
         }
         return nil
     }
@@ -18,10 +18,10 @@ enum TaskValidator {
     /// Validates task duration in minutes.
     static func validateDuration(_ minutes: Int) -> String? {
         if minutes < 5 {
-            return "Минимальная длительность — 5 минут"
+            return L10n.valDurationTooShort
         }
         if minutes > 1440 {
-            return "Максимальная длительность — 24 часа"
+            return L10n.valDurationTooLong
         }
         return nil
     }
@@ -29,7 +29,7 @@ enum TaskValidator {
     /// Validates task notes length.
     static func validateNotes(_ notes: String) -> String? {
         if notes.count > 5000 {
-            return "Заметки слишком длинные (макс. 5000 символов)"
+            return L10n.valNotesTooLong
         }
         return nil
     }
@@ -47,13 +47,13 @@ enum WellnessValidator {
     static func validateMeal(title: String, calories: String) -> String? {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedTitle.isEmpty {
-            return "Укажите название блюда"
+            return L10n.valMealTitleEmpty
         }
         if let cal = Int(calories), cal < 0 {
-            return "Калории не могут быть отрицательными"
+            return L10n.valCaloriesNegative
         }
         if let cal = Int(calories), cal > 10000 {
-            return "Слишком большое количество калорий (макс. 10000)"
+            return L10n.valCaloriesTooHigh
         }
         return nil
     }
@@ -61,11 +61,11 @@ enum WellnessValidator {
     /// Validates sleep entry.
     static func validateSleep(start: Date, end: Date) -> String? {
         if end <= start {
-            return "Время подъёма должно быть позже времени отбоя"
+            return L10n.valSleepEndBeforeStart
         }
         let hours = end.timeIntervalSince(start) / 3600
         if hours > 24 {
-            return "Длительность сна не может превышать 24 часа"
+            return L10n.valSleepTooLong
         }
         return nil
     }
@@ -74,13 +74,13 @@ enum WellnessValidator {
     static func validateActivity(title: String, minutes: String) -> String? {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedTitle.isEmpty {
-            return "Укажите тип активности"
+            return L10n.valActivityTitleEmpty
         }
         if let min = Int(minutes), min < 0 {
-            return "Длительность не может быть отрицательной"
+            return L10n.valActivityDurationNegative
         }
         if let min = Int(minutes), min > 1440 {
-            return "Максимальная длительность — 24 часа"
+            return L10n.valActivityDurationTooLong
         }
         return nil
     }

@@ -149,7 +149,7 @@ final class CloudSync: ObservableObject {
     
     func forceSync() {
         guard NetworkMonitor.shared.isConnected else {
-            syncError = "Нет подключения к сети"
+            syncError = L10n.errorNoNetwork
             return
         }
         

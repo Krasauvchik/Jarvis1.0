@@ -13,10 +13,12 @@ struct StructuredMainView: View {
     @StateObject private var store = PlannerStore.shared
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var userProfile = UserProfile.shared
+    @ObservedObject private var langManager = LanguageManager.shared
     @Environment(\.colorScheme) private var colorScheme
     
     @State private var selectedDate = Date()
     @State private var selectedSection: NavigationSection = .today
+    @State private var selectedCategoryId: UUID?
     @State private var showAddTask = false
     @State private var showSettings = false
     @State private var showProfile = false
@@ -74,6 +76,7 @@ struct StructuredMainView: View {
             }
             #endif
         }
+        .id(langManager.currentLanguage)
         #if os(macOS)
         .frame(minWidth: 900, minHeight: 600)
         #endif
@@ -298,6 +301,7 @@ struct StructuredMainView: View {
                 SidebarView(
                     theme: theme,
                     selectedSection: $selectedSection,
+                    selectedCategoryId: $selectedCategoryId,
                     appMode: appModeBinding,
                     store: store,
                     onHide: { withAnimation(.easeInOut(duration: 0.2)) { leftPanelHidden = true } },
@@ -603,7 +607,12 @@ struct StructuredMainView: View {
     }
 
     private var filteredTasksForCurrentSection: [PlannerTask] {
-        let base = tasksForCurrentSection
+        var base = tasksForCurrentSection
+
+        if let categoryId = selectedCategoryId {
+            base = base.filter { $0.categoryId == categoryId }
+        }
+
         let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return base }
         return base.filter {
@@ -1989,8 +1998,8 @@ struct StructuredMainView: View {
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Голосовая команда Jarvis")
-            .accessibilityHint("Нажмите для управления голосом")
+            .accessibilityLabel(L10n.accessVoiceCommand)
+            .accessibilityHint(L10n.accessVoiceHint)
         }
         .padding(.trailing, 20)
         .padding(.bottom, 20)
@@ -1999,7 +2008,7 @@ struct StructuredMainView: View {
                 AIChatView(aiManager: dependencies.aiManager)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("Готово") { showAIFullChat = false }
+                            Button(L10n.done) { showAIFullChat = false }
                         }
                     }
             }

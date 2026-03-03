@@ -68,6 +68,31 @@ final class AIManager: ObservableObject {
     
     private let heuristic = HeuristicAdapter()
     private var syncObserver: NSObjectProtocol?
+
+    /// Краткое знание о навигации/папках Jarvis для LLM.
+    /// Используется в системных промптах, чтобы модель понимала структуру приложения.
+    private let navigationContextForLLM: String = """
+    Ты работаешь внутри приложения Jarvis Planner.
+
+    Важные разделы (папки) приложения:
+    - Inbox — входящий ящик для всех новых задач без даты.
+    - Today — задачи, запланированные на сегодня.
+    - Scheduled — все задачи с конкретной датой/временем (краткосрочный горизонт).
+    - Future Plans — долгосрочные и личные планы на будущее (более дальний горизонт).
+    - Completed — выполненные задачи (история и база для аналитики).
+    - All Tasks — полный список всех задач.
+    - Health (Wellness) — раздел здоровья: питание, сон, активность, вода.
+    - Calendar — интеграция с Google Calendar (встречи и события).
+    - Mail — интеграция с Gmail (письма, которые могут порождать задачи).
+    - Messengers — Telegram/WhatsApp, откуда берётся контекст переписок.
+    - Analytics — аналитика по задачам и времени.
+    - Projects — задачи, сгруппированные по проектам.
+    - AI Chat (Neural) — главный экран общения с тобой, Jarvis‑ИИ.
+
+    Пользователь может создавать СВОИ категории (кастомные папки) — они хранятся как TaskCategory
+    и используются для фильтрации задач (например: Работа, Семья, Хобби).
+    Если пользователь спрашивает про папки/разделы, используй эти определения.
+    """
     
     init() {
         if let model = CloudSync.shared.loadAIModel() {
@@ -219,7 +244,7 @@ final class AIManager: ObservableObject {
                 ])]
             )
         }
-        return AICommandResponse(response: "Не удалось подготовить выдержку по \"\(topic)\". Проверьте подключение к AI.")
+        return AICommandResponse(response: L10n.aiBriefingFailed)
     }
     
     private func handleContextSearch(query: String, tasks: [PlannerTask]) async -> AICommandResponse {
@@ -272,7 +297,7 @@ final class AIManager: ObservableObject {
         if selectedModel == .heuristic || (!NetworkMonitor.shared.isConnected && !selectedModel.isLocal) {
             let advice = heuristic.generateAdvice(from: tasks).joined(separator: "\n")
             let response = AICommandResponse(
-                response: advice.isEmpty ? "Офлайн: не удалось обработать запрос." : advice,
+                response: advice.isEmpty ? L10n.aiOfflineProcessError : advice,
                 actions: nil
             )
             lastCommandResponse = response
@@ -315,7 +340,7 @@ final class AIManager: ObservableObject {
         // Final fallback: heuristic
         let advice = heuristic.generateAdvice(from: tasks).joined(separator: "\n")
         let response = AICommandResponse(
-            response: advice.isEmpty ? "Не удалось обработать запрос. Проверьте, что Ollama запущена." : advice,
+            response: advice.isEmpty ? L10n.aiCannotConnect : advice,
             actions: nil
         )
         lastCommandResponse = response
@@ -357,19 +382,23 @@ final class AIManager: ObservableObject {
         
         let systemPrompt = """
         Ты — Jarvis, AI-ассистент планировщик. Пользователь управляет приложением голосом.
-        Задачи пользователя:
+
+        Краткая структура приложения и папок:
+        \(navigationContextForLLM)
+
+        Текущие задачи пользователя:
         \(tasksList.isEmpty ? "Нет задач" : tasksList)
-        Дата: \(Date().formatted(date: .abbreviated, time: .shortened))
-        
+        Дата сейчас: \(Date().formatted(date: .abbreviated, time: .shortened))
+
         Если пользователь просит создать/выполнить/удалить/перенести задачу — верни JSON:
         {"response": "текст", "actions": [{"type": "тип", "params": {}}]}
-        
+
         Типы: create_task, complete_task, delete_task, reschedule_task, move_task, advice, none
         Для create_task params: title, date (ISO-8601), priority (low/medium/high), folder (inbox/today)
         Для complete_task/delete_task: title (приблизительное название)
         Для move_task: title, folder (inbox/today/completed/scheduled/future)
         Для reschedule_task: title, new_date (ISO-8601)
-        
+
         Если это простой вопрос — отвечай текстом по-русски, кратко и полезно.
         """
         
@@ -429,11 +458,11 @@ final class AIManager: ObservableObject {
         }
         
         if !NetworkMonitor.shared.isConnected && !selectedModel.isLocal {
-            return "Офлайн (эвристика):\n" + heuristicFallback()
+            return L10n.aiOfflineHeuristic + "\n" + heuristicFallback()
         }
         
         if selectedModel == .ollama || selectedModel == .onDeviceLarge {
-            return await requestOllamaAdvice(tasks: tasks) ?? "Ollama недоступна. Советы:\n" + heuristicFallback()
+            return await requestOllamaAdvice(tasks: tasks) ?? L10n.aiCannotConnect + "\n" + heuristicFallback()
         }
         
         // Cloud models go through backend
@@ -457,11 +486,11 @@ final class AIManager: ObservableObject {
             let (data, response) = try await URLSession.shared.data(for: request)
             if let httpResponse = response as? HTTPURLResponse, !(200...299).contains(httpResponse.statusCode) {
                 Logger.shared.warning("LLM API returned status \(httpResponse.statusCode)")
-                return "Сервер вернул ошибку (\(httpResponse.statusCode)).\n" + heuristicFallback()
+                return L10n.aiServerError + "\n" + heuristicFallback()
             }
             return try? JSONDecoder().decode(Response.self, from: data).advice
         } catch {
-            return "Не удалось связаться с сервером.\n" + heuristicFallback()
+            return L10n.aiCannotConnect + "\n" + heuristicFallback()
         }
     }
     
@@ -519,10 +548,10 @@ final class AIManager: ObservableObject {
         }
         
         if !NetworkMonitor.shared.isConnected {
-            return "Нет сети. Запустите Ollama для офлайн-чата."
+            return L10n.aiNoNetwork
         }
         
-        return "Бэкенд недоступен. Запустите сервер: cd jarvis-backend && python3 -m uvicorn main:app --port 8000"
+        return L10n.aiBackendUnavailable
     }
     
     private func sendChatViaBackend(messages: [(role: String, content: String)]) async -> String? {

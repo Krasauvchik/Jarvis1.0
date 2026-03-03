@@ -155,10 +155,10 @@ enum TaskPriority: String, Codable, Hashable, CaseIterable, Sendable {
 
     var displayName: String {
         switch self {
-        case .urgent: return "Критичный"
-        case .high: return "Высокий"
-        case .medium: return "Средний"
-        case .low: return "Низкий"
+        case .urgent: return L10n.priorityUrgent
+        case .high: return L10n.priorityHigh
+        case .medium: return L10n.priorityMedium
+        case .low: return L10n.priorityLow
         }
     }
 
@@ -248,12 +248,12 @@ struct RecurrenceRule: Codable, Hashable, Sendable {
         
         var displayName: String {
             switch self {
-            case .daily: return "Каждый день"
-            case .weekdays: return "Будни"
-            case .weekends: return "Выходные"
-            case .weekly: return "Еженедельно"
-            case .monthly: return "Ежемесячно"
-            case .yearly: return "Ежегодно"
+            case .daily: return L10n.recurrenceDaily
+            case .weekdays: return L10n.recurrenceWeekdays
+            case .weekends: return L10n.recurrenceWeekends
+            case .weekly: return L10n.recurrenceWeekly
+            case .monthly: return L10n.recurrenceMonthly
+            case .yearly: return L10n.recurrenceYearly
             }
         }
     }
@@ -263,10 +263,10 @@ struct RecurrenceRule: Codable, Hashable, Sendable {
             return frequency.displayName
         }
         switch frequency {
-        case .daily: return "Каждые \(interval) дн."
-        case .weekly: return "Каждые \(interval) нед."
-        case .monthly: return "Каждые \(interval) мес."
-        case .yearly: return "Каждые \(interval) лет"
+        case .daily: return String(format: L10n.recurrenceEveryDays, interval)
+        case .weekly: return String(format: L10n.recurrenceEveryWeeks, interval)
+        case .monthly: return String(format: L10n.recurrenceEveryMonths, interval)
+        case .yearly: return String(format: L10n.recurrenceEveryYears, interval)
         case .weekdays, .weekends: return frequency.displayName
         }
     }
@@ -339,11 +339,11 @@ struct TaskReminder: Identifiable, Codable, Hashable, Sendable {
     
     var displayName: String {
         let abs = abs(offsetMinutes)
-        if abs == 0 { return "В момент начала" }
-        if abs < 60 { return "\(abs) мин. до" }
-        if abs == 60 { return "1 час до" }
-        if abs < 1440 { return "\(abs / 60) ч. до" }
-        return "\(abs / 1440) дн. до"
+        if abs == 0 { return L10n.reminderAtStart }
+        if abs < 60 { return String(format: L10n.reminderMinBefore, abs) }
+        if abs == 60 { return L10n.reminderHourBefore }
+        if abs < 1440 { return String(format: L10n.reminderHoursBefore, abs / 60) }
+        return String(format: L10n.reminderDaysBefore, abs / 1440)
     }
     
     /// Common reminder presets
@@ -353,6 +353,39 @@ struct TaskReminder: Identifiable, Codable, Hashable, Sendable {
     static let thirtyMinBefore = TaskReminder(offsetMinutes: -30)
     static let oneHourBefore = TaskReminder(offsetMinutes: -60)
     static let oneDayBefore = TaskReminder(offsetMinutes: -1440)
+}
+
+// MARK: - Task Attachments
+
+struct TaskAttachment: Identifiable, Codable, Hashable, Sendable {
+    enum AttachmentType: String, Codable, CaseIterable, Hashable, Sendable {
+        case image
+        case file
+    }
+
+    let id: UUID
+    var type: AttachmentType
+    var fileName: String
+    /// Absolute file path in the app container (Documents/TaskAttachments/...)
+    var filePath: String
+    var fileSize: Int64?
+    var createdAt: Date
+
+    init(
+        id: UUID = UUID(),
+        type: AttachmentType,
+        fileName: String,
+        filePath: String,
+        fileSize: Int64? = nil,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.type = type
+        self.fileName = fileName
+        self.filePath = filePath
+        self.fileSize = fileSize
+        self.createdAt = createdAt
+    }
 }
 
 // MARK: - Task Model
@@ -389,6 +422,8 @@ struct PlannerTask: Identifiable, Codable, Hashable, Sendable {
     var source: TaskSource
     /// Multiple reminders per task (replaces simple hasAlarm)
     var reminders: [TaskReminder]
+    /// Attached files or images for this task
+    var attachments: [TaskAttachment]
 
     init(
         id: UUID = UUID(),
@@ -414,7 +449,8 @@ struct PlannerTask: Identifiable, Codable, Hashable, Sendable {
         modifiedAt: Date = Date(),
         completedAt: Date? = nil,
         source: TaskSource = .manual,
-        reminders: [TaskReminder] = []
+        reminders: [TaskReminder] = [],
+        attachments: [TaskAttachment] = []
     ) {
         self.id = id
         self.title = title
@@ -440,10 +476,11 @@ struct PlannerTask: Identifiable, Codable, Hashable, Sendable {
         self.completedAt = completedAt
         self.source = source
         self.reminders = reminders
+        self.attachments = attachments
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, title, notes, date, durationMinutes, isAllDay, recurrenceRule, isCompleted, hasAlarm, isInbox, completedRecurrenceDates, colorIndex, icon, categoryId, tagIds, calendarEventId, priority, parentTaskId, projectId, createdAt, modifiedAt, completedAt, source, reminders
+        case id, title, notes, date, durationMinutes, isAllDay, recurrenceRule, isCompleted, hasAlarm, isInbox, completedRecurrenceDates, colorIndex, icon, categoryId, tagIds, calendarEventId, priority, parentTaskId, projectId, createdAt, modifiedAt, completedAt, source, reminders, attachments
     }
 
     init(from decoder: Decoder) throws {
@@ -473,6 +510,7 @@ struct PlannerTask: Identifiable, Codable, Hashable, Sendable {
         completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
         source = try c.decodeIfPresent(TaskSource.self, forKey: .source) ?? .manual
         reminders = try c.decodeIfPresent([TaskReminder].self, forKey: .reminders) ?? []
+        attachments = try c.decodeIfPresent([TaskAttachment].self, forKey: .attachments) ?? []
     }
 
     func encode(to encoder: Encoder) throws {
@@ -501,6 +539,7 @@ struct PlannerTask: Identifiable, Codable, Hashable, Sendable {
         try c.encodeIfPresent(completedAt, forKey: .completedAt)
         try c.encode(source, forKey: .source)
         try c.encode(reminders, forKey: .reminders)
+        try c.encode(attachments, forKey: .attachments)
     }
 
     var endDate: Date {

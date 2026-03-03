@@ -17,14 +17,14 @@ enum NetworkError: Error, LocalizedError, Sendable {
     
     var errorDescription: String? {
         switch self {
-        case .noConnection: return "Нет подключения к интернету"
-        case .invalidURL: return "Неверный URL"
-        case .invalidResponse: return "Неверный ответ сервера"
-        case .httpError(let code, let message): return "Ошибка HTTP \(code): \(message ?? "Неизвестная ошибка")"
-        case .decodingError: return "Ошибка обработки данных"
-        case .timeout: return "Превышено время ожидания"
-        case .serverError(let message): return "Ошибка сервера: \(message)"
-        case .unauthorized: return "Требуется авторизация"
+        case .noConnection: return L10n.errNetNoConnection
+        case .invalidURL: return L10n.errNetInvalidURL
+        case .invalidResponse: return L10n.errNetInvalidResponse
+        case .httpError(let code, let message): return L10n.errNetHttpError(code, message ?? L10n.errUnknownError)
+        case .decodingError: return L10n.errNetDecodingError
+        case .timeout: return L10n.errNetTimeout
+        case .serverError(let message): return L10n.errNetServerError(message)
+        case .unauthorized: return L10n.errNetUnauthorized
         case .unknown(let error): return error.localizedDescription
         }
     }
@@ -66,15 +66,15 @@ enum AppError: Error, LocalizedError, Identifiable, Sendable {
     var recoverySuggestion: String? {
         switch self {
         case .network(.noConnection):
-            return "Проверьте подключение к интернету и попробуйте снова"
+            return L10n.recoveryCheckInternet
         case .network(.timeout):
-            return "Сервер не отвечает. Попробуйте позже"
+            return L10n.recoveryServerTimeout
         case .auth(.unauthorized):
-            return "Войдите в аккаунт заново"
+            return L10n.recoveryRelogin
         case .sync(.conflict):
-            return "Обновите данные и попробуйте снова"
+            return L10n.recoverySyncConflict
         default:
-            return "Попробуйте позже или обратитесь в поддержку"
+            return L10n.recoveryDefault
         }
     }
     
@@ -110,10 +110,10 @@ enum SyncError: Error, LocalizedError, Sendable {
     
     var errorDescription: String? {
         switch self {
-        case .conflict: return "Конфликт синхронизации"
-        case .dataCorrupted: return "Данные повреждены"
-        case .cloudUnavailable: return "iCloud недоступен"
-        case .quotaExceeded: return "Превышен лимит хранилища"
+        case .conflict: return L10n.errSyncConflict
+        case .dataCorrupted: return L10n.errSyncDataCorrupted
+        case .cloudUnavailable: return L10n.errSyncCloudUnavailable
+        case .quotaExceeded: return L10n.errSyncQuotaExceeded
         }
     }
 }
@@ -129,10 +129,10 @@ enum ValidationError: Error, LocalizedError, Sendable {
     
     var errorDescription: String? {
         switch self {
-        case .emptyTitle: return "Название не может быть пустым"
-        case .invalidDate: return "Неверная дата"
-        case .invalidDuration: return "Неверная длительность"
-        case .tooManyTasks: return "Слишком много задач"
+        case .emptyTitle: return L10n.errValEmptyTitle
+        case .invalidDate: return L10n.errValInvalidDate
+        case .invalidDuration: return L10n.errValInvalidDuration
+        case .tooManyTasks: return L10n.errValTooManyTasks
         case .custom(let message): return message
         }
     }
@@ -148,10 +148,10 @@ enum StorageError: Error, LocalizedError, Sendable {
     
     var errorDescription: String? {
         switch self {
-        case .saveFailed: return "Не удалось сохранить данные"
-        case .loadFailed: return "Не удалось загрузить данные"
-        case .migrationFailed: return "Ошибка миграции данных"
-        case .insufficientSpace: return "Недостаточно места"
+        case .saveFailed: return L10n.errStorageSaveFailed
+        case .loadFailed: return L10n.errStorageLoadFailed
+        case .migrationFailed: return L10n.errStorageMigrationFailed
+        case .insufficientSpace: return L10n.errStorageInsufficientSpace
         }
     }
 }
@@ -166,10 +166,10 @@ enum AuthError: Error, LocalizedError, Sendable {
     
     var errorDescription: String? {
         switch self {
-        case .unauthorized: return "Требуется авторизация"
-        case .tokenExpired: return "Сессия истекла"
-        case .accountNotFound: return "Аккаунт не найден"
-        case .permissionDenied: return "Доступ запрещён"
+        case .unauthorized: return L10n.errAuthUnauthorized
+        case .tokenExpired: return L10n.errAuthTokenExpired
+        case .accountNotFound: return L10n.errAuthAccountNotFound
+        case .permissionDenied: return L10n.errAuthPermissionDenied
         }
     }
 }
@@ -184,10 +184,10 @@ enum AIError: Error, LocalizedError, Sendable {
     
     var errorDescription: String? {
         switch self {
-        case .modelUnavailable: return "AI модель недоступна"
-        case .inputTooLong: return "Слишком длинный запрос"
-        case .rateLimited: return "Превышен лимит запросов"
-        case .processingFailed: return "Ошибка обработки"
+        case .modelUnavailable: return L10n.errAIModelUnavailable
+        case .inputTooLong: return L10n.errAIInputTooLong
+        case .rateLimited: return L10n.errAIRateLimited
+        case .processingFailed: return L10n.errAIProcessingFailed
         }
     }
 }
@@ -239,7 +239,7 @@ struct ErrorAlertModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .alert(
-                "Ошибка",
+                L10n.alertErrorTitle,
                 isPresented: $handler.showingError,
                 presenting: handler.currentError
             ) { error in
@@ -247,7 +247,7 @@ struct ErrorAlertModifier: ViewModifier {
                     handler.dismiss()
                 }
                 if error.isRetryable {
-                    Button("Повторить") {
+                    Button(L10n.alertRetry) {
                         // Retry logic would go here
                         handler.dismiss()
                     }

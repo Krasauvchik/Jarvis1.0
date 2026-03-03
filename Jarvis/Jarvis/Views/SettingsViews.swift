@@ -751,6 +751,7 @@ struct AddTagSheet: View {
 
 struct SettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var langManager = LanguageManager.shared
     @State private var showSleepCalculator = false
     @State private var selectedSettingsTab: SettingsTab = .account
     let theme: JarvisTheme
@@ -759,6 +760,7 @@ struct SettingsSheet: View {
         NavigationStack {
             #if os(macOS)
             settingsSidebar
+                .id(langManager.currentLanguage)
                 .navigationTitle(L10n.settingsTitle)
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
@@ -774,6 +776,7 @@ struct SettingsSheet: View {
                 }
             #else
             settingsSidebar
+                .id(langManager.currentLanguage)
                 .navigationTitle(L10n.settingsTitle)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {

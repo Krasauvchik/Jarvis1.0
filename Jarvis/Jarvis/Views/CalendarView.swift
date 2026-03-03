@@ -130,7 +130,7 @@ struct CalendarView: View {
             if isAuthorized { await loadEvents() }
         } catch {
             isAuthorized = false
-            errorMessage = "Ошибка: \(error.localizedDescription)"
+            errorMessage = "\(L10n.errorGeneric): \(error.localizedDescription)"
         }
     }
     

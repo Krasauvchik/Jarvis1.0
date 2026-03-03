@@ -62,14 +62,14 @@ final class AILifeCoach: ObservableObject {
 
         var displayName: String {
             switch self {
-            case .fitness: return "Фитнес"
-            case .nutrition: return "Питание"
-            case .learning: return "Обучение"
-            case .meditation: return "Медитация"
-            case .finance: return "Финансы"
-            case .health: return "Здоровье"
-            case .hobby: return "Хобби"
-            case .other: return "Другое"
+            case .fitness: return L10n.coachFitness
+            case .nutrition: return L10n.coachNutrition
+            case .learning: return L10n.coachLearning
+            case .meditation: return L10n.coachMeditation
+            case .finance: return L10n.coachFinance
+            case .health: return L10n.coachHealth
+            case .hobby: return L10n.coachHobby
+            case .other: return L10n.coachOther
             }
         }
     }
@@ -164,7 +164,7 @@ final class AILifeCoach: ObservableObject {
             Logger.shared.error("AILifeCoach LLM error: \(error.localizedDescription)")
         }
 
-        return "Не удалось получить рекомендацию. Попробуйте позже."
+        return L10n.coachFailed
     }
 
     // MARK: - Prompt Builder

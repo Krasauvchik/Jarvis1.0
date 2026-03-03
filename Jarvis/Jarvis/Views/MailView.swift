@@ -130,7 +130,7 @@ struct MailView: View {
             if isAuthorized { await loadMail() }
         } catch {
             isAuthorized = false
-            errorMessage = "Ошибка: \(error.localizedDescription)"
+            errorMessage = "\(L10n.errorGeneric): \(error.localizedDescription)"
         }
     }
     

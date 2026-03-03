@@ -201,7 +201,7 @@ final class MeetingBriefingService: ObservableObject {
             return result
         }
         
-        return "⚠️ AI недоступна. Сырые данные:\n\n\(context.prefix(3000))"
+        return L10n.briefingAIUnavailable(String(context.prefix(3000)))
     }
     
     private func requestBackendBriefing(context: String, meeting: MeetingInfo) async -> String? {
