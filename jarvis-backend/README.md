@@ -2,14 +2,22 @@
 
 API для приложения Jarvis Planner (календарь, анализ питания, LLM-советы).
 
-## Endpoints
+## Endpoints (основные)
 
 | Метод | Путь | Описание |
 |-------|------|----------|
-| GET | /health | Проверка работоспособности |
-| GET | /calendar/events | События календаря (пока mock) |
-| POST | /analyze-meal | Анализ фото блюда → { title, calories } |
-| POST | /llm/plan | Советы по задачам → { advice } |
+| GET | /health | Проверка работоспособности + статус Ollama |
+| GET | /calendar/events | События Google Calendar |
+| POST | /calendar/events | Создание события в календаре |
+| GET | /mail/messages | Список писем Gmail |
+| POST | /mail/send | Отправка письма |
+| POST | /llm/plan | LLM‑советы по задачам (Cloud → Ollama → heuristic) |
+| POST | /llm/chat | Прокси‑чат (Cloud → Ollama) |
+| POST | /ai/command | Унифицированные голосовые команды (AIAction JSON) |
+| POST | /ai/digest | AI‑дайджест (календарь+почта+мессенджеры) |
+| POST | /ai/context-search | Кросс‑поиск по календарю/почте/мессенджерам |
+| POST | /ai/meeting-briefing | Брифинг по встрече |
+| POST | /ai/delegate-task | Делегирование задачи через мессенджер (preview) |
 
 ## Сервер
 
@@ -34,11 +42,29 @@ sudo systemctl start jarvis-backend
 sudo systemctl status jarvis-backend
 ```
 
+## LLM‑слой
+
+Backend поддерживает 3 уровня работы с AI:
+
+- **Cloud LLM (Cloud GPT / совместимые)** — используется, если заданы переменные окружения:
+    - `JARVIS_CLOUD_LLM_API_KEY`
+    - `JARVIS_CLOUD_LLM_MODEL` (по умолчанию `gpt-4.1-mini`)
+    - `JARVIS_CLOUD_LLM_BASE_URL` (по умолчанию `https://api.openai.com/v1`)
+    - Задействуется в `/llm/plan`, `/llm/chat`, `/ai/command`, `/ai/digest`, Telegram/WhatsApp‑дайджестах, `/ai/meeting-briefing`.
+- **Ollama (локальная LLM)** — используется как fallback и локальный режим:
+    - HTTP API `http://localhost:11434/api/generate` и `/api/chat`.
+    - Модель по умолчанию `llama3.2`.
+- **Эвристики** — простые правила, если LLM недоступны.
+
+Таким образом, цепочка для большинства эндпоинтов:
+
+> Cloud LLM → Ollama → heuristic
+
+и при этом конфиденциальные данные остаются на вашем сервере.
+
 ## Будущие интеграции
 
-- **Google Calendar**: OAuth + Google Calendar API
 - **Nutrition AI**: Gemini Vision / OpenAI для распознавания блюд
-- **LLM**: OpenAI / Anthropic для умных советов
 
 ## HTTPS (TLS)
 

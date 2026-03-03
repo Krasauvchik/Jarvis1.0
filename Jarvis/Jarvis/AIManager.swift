@@ -268,6 +268,17 @@ final class AIManager: ObservableObject {
     }
     
     private func handleStandardCommand(message: String, tasks: [PlannerTask], date: Date) async -> AICommandResponse {
+        // 0. Чисто эвристический режим или оффлайн без облака
+        if selectedModel == .heuristic || (!NetworkMonitor.shared.isConnected && !selectedModel.isLocal) {
+            let advice = heuristic.generateAdvice(from: tasks).joined(separator: "\n")
+            let response = AICommandResponse(
+                response: advice.isEmpty ? "Офлайн: не удалось обработать запрос." : advice,
+                actions: nil
+            )
+            lastCommandResponse = response
+            return response
+        }
+
         let taskDicts: [[String: Any]] = tasks.prefix(30).map { t in
             [
                 "title": t.title,

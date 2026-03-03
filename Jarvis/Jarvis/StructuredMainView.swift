@@ -269,7 +269,7 @@ struct StructuredMainView: View {
                     HStack(spacing: 5) {
                         Image(systemName: mode.icon)
                             .font(.system(size: 11, weight: .semibold))
-                        Text(mode.rawValue)
+                        Text(mode.localizedName)
                             .font(.system(size: 12, weight: appMode == mode ? .bold : .medium))
                     }
                     .foregroundColor(appMode == mode ? .white : JarvisTheme.textSecondary)
@@ -453,7 +453,7 @@ struct StructuredMainView: View {
             // Header
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(selectedSection.rawValue)
+                    Text(selectedSection.localizedName)
                         .font(.system(size: 20, weight: .bold))
                         .foregroundColor(theme.textPrimary)
                     

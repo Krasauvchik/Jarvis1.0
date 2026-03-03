@@ -10,8 +10,15 @@ final class SleepCalculator: ObservableObject {
     @Published var mode: CalculationMode = .wakeUp
     
     enum CalculationMode: String, CaseIterable {
-        case wakeUp = "Когда проснуться"
-        case bedTime = "Когда лечь спать"
+        case wakeUp = "wake_up"
+        case bedTime = "bed_time"
+        
+        var displayName: String {
+            switch self {
+            case .wakeUp: return L10n.sleepCalcWakeUp
+            case .bedTime: return L10n.sleepCalcBedtime
+            }
+        }
     }
     
     private let sleepCycleDuration: TimeInterval = 90 * 60
@@ -35,12 +42,12 @@ final class SleepCalculator: ObservableObject {
     func sleepDuration(cycles: Int) -> String {
         let hours = (cycles * 90) / 60
         let minutes = (cycles * 90) % 60
-        if minutes == 0 { return "\(hours) ч" }
-        return "\(hours) ч \(minutes) мин"
+        if minutes == 0 { return "\(hours) \(L10n.hoursShort)" }
+        return "\(hours) \(L10n.hoursShort) \(minutes) \(L10n.minutesShort)"
     }
     
     func cyclesDescription(cycles: Int) -> String {
-        let forms = ["цикл", "цикла", "циклов"]
+        let forms = [L10n.sleepCycleSingular, L10n.sleepCycleFew, L10n.sleepCycleMany]
         let n = cycles % 100
         let n1 = n % 10
         let form: String
@@ -63,9 +70,9 @@ struct SleepCalculatorSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 24) {
-                    Picker("Режим", selection: $calculator.mode) {
+                    Picker(L10n.sleepCalcMode, selection: $calculator.mode) {
                         ForEach(SleepCalculator.CalculationMode.allCases, id: \.self) { mode in
-                            Text(mode.rawValue).tag(mode)
+                            Text(mode.displayName).tag(mode)
                         }
                     }
                     .pickerStyle(.segmented)
@@ -73,7 +80,7 @@ struct SleepCalculatorSheet: View {
                     
                     VStack(spacing: 12) {
                         if calculator.mode == .wakeUp {
-                            Text("Во сколько нужно проснуться?")
+                            Text(L10n.sleepCalcWakeQuestion)
                                 .font(.system(size: 16, weight: .medium))
                                 .foregroundColor(theme.textSecondary)
                             
@@ -83,7 +90,7 @@ struct SleepCalculatorSheet: View {
                                 #endif
                                 .labelsHidden()
                         } else {
-                            Text("Во сколько ляжете спать?")
+                            Text(L10n.sleepCalcBedQuestion)
                                 .font(.system(size: 16, weight: .medium))
                                 .foregroundColor(theme.textSecondary)
                             
@@ -102,7 +109,7 @@ struct SleepCalculatorSheet: View {
                         HStack {
                             Image(systemName: "moon.zzz.fill")
                                 .foregroundColor(JarvisTheme.accentPurple)
-                            Text(calculator.mode == .wakeUp ? "Рекомендуемое время засыпания" : "Рекомендуемое время пробуждения")
+                            Text(calculator.mode == .wakeUp ? L10n.sleepCalcRecommendedBed : L10n.sleepCalcRecommendedWake)
                                 .font(.system(size: 16, weight: .semibold))
                                 .foregroundColor(theme.textPrimary)
                         }
@@ -115,15 +122,15 @@ struct SleepCalculatorSheet: View {
                         }
                         
                         VStack(alignment: .leading, spacing: 8) {
-                            Label("Средний человек засыпает за 14 минут", systemImage: "info.circle")
+                            Label(L10n.sleepCalcAvgFallAsleep, systemImage: "info.circle")
                                 .font(.system(size: 13))
                                 .foregroundColor(theme.textSecondary)
                             
-                            Label("Один цикл сна = 90 минут", systemImage: "clock")
+                            Label(L10n.sleepCalcCycleDuration, systemImage: "clock")
                                 .font(.system(size: 13))
                                 .foregroundColor(theme.textSecondary)
                             
-                            Label("Оптимально: 5-6 циклов (7.5-9 часов)", systemImage: "star")
+                            Label(L10n.sleepCalcOptimalCycles, systemImage: "star")
                                 .font(.system(size: 13))
                                 .foregroundColor(JarvisTheme.accentGreen)
                         }
@@ -138,13 +145,13 @@ struct SleepCalculatorSheet: View {
                 .padding(.vertical)
             }
             .background(theme.background)
-            .navigationTitle("Калькулятор сна")
+            .navigationTitle(L10n.sleepCalcTitle)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Готово") { dismiss() }
+                    Button(L10n.done) { dismiss() }
                 }
             }
         }
@@ -165,7 +172,7 @@ struct SleepCalculatorSheet: View {
             Spacer()
             
             if isOptimal {
-                Text("Оптимально")
+                Text(L10n.sleepOptimalLabel)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(JarvisTheme.accentGreen)
                     .padding(.horizontal, 10)
@@ -264,18 +271,18 @@ struct ProfileSheet: View {
                     
                     VStack(spacing: 16) {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Имя")
+                            Text(L10n.profileName)
                                 .font(.system(size: 14, weight: .medium))
                                 .foregroundColor(theme.textSecondary)
-                            TextField("Введите имя", text: $editedName)
+                            TextField(L10n.profileNamePlaceholder, text: $editedName)
                                 .textFieldStyle(.roundedBorder)
                         }
                         
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Email")
+                            Text(L10n.email)
                                 .font(.system(size: 14, weight: .medium))
                                 .foregroundColor(theme.textSecondary)
-                            TextField("Введите email", text: $editedEmail)
+                            TextField(L10n.profileEmailPlaceholder, text: $editedEmail)
                                 .textFieldStyle(.roundedBorder)
                                 #if os(iOS)
                                 .keyboardType(.emailAddress)
@@ -287,14 +294,14 @@ struct ProfileSheet: View {
                     .padding(.horizontal, 20)
                     
                     VStack(spacing: 12) {
-                        Text("Статистика")
+                        Text(L10n.profileStats)
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundColor(theme.textPrimary)
                         
                         HStack(spacing: 16) {
-                            profileStatCard(value: "\(store.tasks.count)", label: "Всего", color: JarvisTheme.accent)
-                            profileStatCard(value: "\(store.tasks.filter { $0.isCompleted }.count)", label: "Выполнено", color: JarvisTheme.accentGreen)
-                            profileStatCard(value: "\(completionRate)%", label: "Успех", color: JarvisTheme.accentBlue)
+                            profileStatCard(value: "\(store.tasks.count)", label: L10n.statsTotal, color: JarvisTheme.accent)
+                            profileStatCard(value: "\(store.tasks.filter { $0.isCompleted }.count)", label: L10n.statsDone, color: JarvisTheme.accentGreen)
+                            profileStatCard(value: "\(completionRate)%", label: L10n.statsSuccess, color: JarvisTheme.accentBlue)
                         }
                     }
                     .padding(.horizontal, 20)
@@ -303,16 +310,16 @@ struct ProfileSheet: View {
                 }
             }
             .background(theme.background)
-            .navigationTitle("Профиль")
+            .navigationTitle(L10n.profileTitle)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { dismiss() }
+                    Button(L10n.cancel) { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Сохранить") {
+                    Button(L10n.save) {
                         userProfile.name = editedName
                         userProfile.email = editedEmail
                         userProfile.avatarEmoji = selectedEmoji

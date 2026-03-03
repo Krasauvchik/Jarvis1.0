@@ -278,12 +278,12 @@ struct AddTaskSheet: View {
                 
                 if !isAllDay {
                     Picker(L10n.durationField, selection: $duration) {
-                        Text("15 мин").tag(15)
-                        Text("30 мин").tag(30)
-                        Text("45 мин").tag(45)
-                        Text("1 час").tag(60)
-                        Text("1.5 часа").tag(90)
-                        Text("2 часа").tag(120)
+                        Text(L10n.duration15min).tag(15)
+                        Text(L10n.duration30min).tag(30)
+                        Text(L10n.duration45min).tag(45)
+                        Text(L10n.duration1h).tag(60)
+                        Text(L10n.duration1h30).tag(90)
+                        Text(L10n.duration2h).tag(120)
                     }
                 }
             }
@@ -540,7 +540,7 @@ struct EditTaskSheet: View {
                                 HStack(spacing: 6) {
                                     Image(systemName: "calendar")
                                         .font(.system(size: 14))
-                                    Text("Date")
+                                    Text(L10n.date)
                                         .font(.system(size: 14, weight: .medium))
                                 }
                                 .foregroundColor(theme.textPrimary)
@@ -558,7 +558,7 @@ struct EditTaskSheet: View {
                                     HStack(spacing: 6) {
                                         Image(systemName: "clock")
                                             .font(.system(size: 14))
-                                        Text("Time")
+                                        Text(L10n.time)
                                             .font(.system(size: 14, weight: .medium))
                                     }
                                     .foregroundColor(theme.textPrimary)
@@ -576,7 +576,7 @@ struct EditTaskSheet: View {
                                 .labelsHidden()
                                 .tint(taskColor)
                             
-                            Text("All Day")
+                            Text(L10n.allDay)
                                 .font(.system(size: 13))
                                 .foregroundColor(theme.textSecondary)
                             
@@ -614,7 +614,7 @@ struct EditTaskSheet: View {
                     
                     // Notes
                     VStack(alignment: .leading, spacing: 8) {
-                        TextField("Add notes, meeting links or phone numbers...", text: $notes, axis: .vertical)
+                        TextField(L10n.notesPlaceholder, text: $notes, axis: .vertical)
                             .font(.system(size: 14))
                             .foregroundColor(theme.textPrimary)
                             .lineLimit(4...8)
@@ -737,7 +737,7 @@ struct EditTaskSheet: View {
                 Spacer()
                 
                 Button(action: saveAndDismiss) {
-                    Text("Update Task")
+                    Text(L10n.updateTask)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(.white)
                         .padding(.horizontal, 24)

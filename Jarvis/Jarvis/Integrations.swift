@@ -104,7 +104,7 @@ final class NutritionService: Sendable {
         if let decoded = try? JSONDecoder().decode(Response.self, from: data) {
             return Result(title: decoded.title, calories: decoded.calories)
         }
-        return Result(title: "Блюдо", calories: 0)
+        return Result(title: L10n.defaultDish, calories: 0)
     }
 }
 

@@ -287,14 +287,6 @@ final class VoiceCommandExecutor: ObservableObject {
     }
     
     private func sectionDisplayName(_ section: NavigationSection) -> String {
-        switch section {
-        case .inbox: return "Входящие"
-        case .today: return "Сегодня"
-        case .scheduled: return "Запланировано"
-        case .futurePlans: return "Будущие планы"
-        case .completed: return "Выполненные"
-        case .all: return "Все"
-        default: return section.rawValue
-        }
+        return section.localizedName
     }
 }

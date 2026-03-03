@@ -80,7 +80,7 @@ struct AIChatView: View {
                         .foregroundColor(digestService.isLoading ? theme.textTertiary : JarvisTheme.accentPurple)
                 }
                 .disabled(digestService.isLoading)
-                .help("AI-выдержка по задачам, календарю и почте")
+                .help(L10n.aiDigestHelp)
             }
         }
         .onChange(of: speech.transcript) { _, newValue in
@@ -108,7 +108,7 @@ struct AIChatView: View {
                 .font(.caption)
                 .foregroundColor(theme.textSecondary)
             Spacer()
-            Button("Скрыть") { errorMessage = nil }
+            Button(L10n.hide) { errorMessage = nil }
                 .font(.caption)
                 .foregroundColor(JarvisTheme.accent)
         }
@@ -124,23 +124,23 @@ struct AIChatView: View {
             Image(systemName: "brain.head.profile")
                 .font(.system(size: 56))
                 .foregroundStyle(theme.textTertiary)
-            Text("Голосовое управление Jarvis")
+            Text(L10n.voiceControlTitle)
                 .font(.headline)
                 .foregroundColor(theme.textPrimary)
-            Text("Управляйте задачами голосом или текстом. Попробуйте:")
+            Text(L10n.voiceControlSubtitle)
                 .font(.subheadline)
                 .foregroundColor(theme.textSecondary)
                 .multilineTextAlignment(.center)
             
             VStack(alignment: .leading, spacing: 8) {
-                voiceHint("🗣 «Создай задачу купить молоко на завтра в 10:00»")
-                voiceHint("✅ «Отметь задачу купить молоко как выполненную»")
-                voiceHint("� «Подготовь выдержку по встрече Соевый соус»")
-                voiceHint("🔍 «Найди всё по теме проект Alpha»")
-                voiceHint("💪 «Поставь задачу — качать плечи в зале»")
-                voiceHint("📤 «Поставь задачу ревью пользователю @nick»")
-                voiceHint("📊 «Покажи выдержку по моему дню»")
-                voiceHint("📧 «Покажи непрочитанные письма»")
+                voiceHint(L10n.voiceHint1)
+                voiceHint(L10n.voiceHint2)
+                voiceHint(L10n.voiceHint3)
+                voiceHint(L10n.voiceHint4)
+                voiceHint(L10n.voiceHint5)
+                voiceHint(L10n.voiceHint6)
+                voiceHint(L10n.voiceHint7)
+                voiceHint(L10n.voiceHint8)
             }
             .padding(.horizontal, 32)
         }
@@ -160,7 +160,7 @@ struct AIChatView: View {
         HStack(alignment: .top, spacing: 8) {
             ProgressView()
                 .scaleEffect(0.9)
-            Text(speech.isRecording ? "Слушаю..." : "Думаю...")
+            Text(speech.isRecording ? L10n.listening : L10n.thinking)
                 .font(.subheadline)
                 .foregroundColor(theme.textSecondary)
             Spacer()
@@ -268,9 +268,9 @@ struct AIChatView: View {
             }
             .buttonStyle(.plain)
             .disabled(isWaitingReply)
-            .help(speech.isRecording ? "Остановить запись" : "Голосовая команда")
+            .help(speech.isRecording ? L10n.stopRecording : L10n.voiceCommand)
             
-            TextField("Сообщение или голосовая команда...", text: $inputText, axis: .vertical)
+            TextField(L10n.messageOrVoice, text: $inputText, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...5)
                 .padding(.horizontal, 14)
@@ -306,7 +306,7 @@ struct AIChatView: View {
                     if digestService.isLoading {
                         HStack {
                             ProgressView()
-                            Text("Собираю данные из всех источников...")
+                            Text(L10n.gatheringData)
                                 .font(.subheadline)
                                 .foregroundColor(theme.textSecondary)
                         }
@@ -315,7 +315,7 @@ struct AIChatView: View {
                     } else if let digest = digestService.lastDigest {
                         // Summary
                         VStack(alignment: .leading, spacing: 8) {
-                            Label("AI-выдержка", systemImage: "brain.head.profile")
+                            Label(L10n.aiDigest, systemImage: "brain.head.profile")
                                 .font(.headline)
                                 .foregroundColor(JarvisTheme.accentPurple)
                             Text(digest.summary)
@@ -329,24 +329,24 @@ struct AIChatView: View {
                         
                         // Calendar events
                         if !digest.calendarEvents.isEmpty {
-                            digestSection(title: "📅 Календарь", items: digest.calendarEvents.map { "\($0.title) — \($0.time)" })
+                            digestSection(title: L10n.digestCalendar, items: digest.calendarEvents.map { "\($0.title) — \($0.time)" })
                         }
                         
                         // Mail
                         if !digest.mailHighlights.isEmpty {
-                            digestSection(title: "📧 Почта", items: digest.mailHighlights.map { "\($0.from): \($0.subject)" })
+                            digestSection(title: L10n.digestMail, items: digest.mailHighlights.map { "\($0.from): \($0.subject)" })
                         }
                         
                         // Messengers
                         if !digest.messengerNotes.isEmpty {
-                            digestSection(title: "💬 Мессенджеры", items: digest.messengerNotes.map { "[\($0.source)] \($0.summary)" })
+                            digestSection(title: L10n.digestMessengers, items: digest.messengerNotes.map { "[\($0.source)] \($0.summary)" })
                         }
                         
-                        Text("Обновлено: \(digest.generatedAt.formatted(date: .omitted, time: .standard))")
+                        Text("\(L10n.updatedAt) \(digest.generatedAt.formatted(date: .omitted, time: .standard))")
                             .font(.caption)
                             .foregroundColor(theme.textTertiary)
                     } else {
-                        Text("Нажмите «Обновить» для генерации выдержки")
+                        Text(L10n.tapRefreshDigest)
                             .font(.subheadline)
                             .foregroundColor(theme.textSecondary)
                             .frame(maxWidth: .infinity)
@@ -356,19 +356,19 @@ struct AIChatView: View {
                 .padding()
             }
             .background(theme.background)
-            .navigationTitle("AI Выдержка")
+            .navigationTitle(L10n.aiDigestTitle)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
                 ToolbarItem(placement: .automatic) {
                     Button(action: { requestDigest() }) {
-                        Label("Обновить", systemImage: "arrow.clockwise")
+                        Label(L10n.refresh, systemImage: "arrow.clockwise")
                     }
                     .disabled(digestService.isLoading)
                 }
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Готово") { showDigestSheet = false }
+                    Button(L10n.done) { showDigestSheet = false }
                 }
             }
         }
@@ -449,7 +449,7 @@ struct AIChatView: View {
                         if type == "show_calendar" {
                             let items = data.prefix(5).compactMap { $0["title"] as? String }
                             if !items.isEmpty {
-                                replyText += "\n\n📅 Ближайшие события:\n" + items.map { "• \($0)" }.joined(separator: "\n")
+                                replyText += "\n\n\(L10n.upcomingEvents)\n" + items.map { "• \($0)" }.joined(separator: "\n")
                             }
                         } else if type == "show_mail" {
                             let items = data.prefix(5).compactMap { dict -> String? in
@@ -457,7 +457,7 @@ struct AIChatView: View {
                                 return "\(from): \(subj)"
                             }
                             if !items.isEmpty {
-                                replyText += "\n\n📧 Последние письма:\n" + items.map { "• \($0)" }.joined(separator: "\n")
+                                replyText += "\n\n\(L10n.latestEmails)\n" + items.map { "• \($0)" }.joined(separator: "\n")
                             }
                         }
                     }
@@ -491,7 +491,7 @@ struct AIChatView: View {
                 let shortSummary = String(digest.summary.prefix(500))
                 messages.append(AIChatMessage(
                     role: "assistant",
-                    content: "📊 AI-выдержка сгенерирована:\n\n\(shortSummary)\n\n(Полная версия — в листе выдержки)"
+                    content: "📊 \(L10n.digestGenerated):\n\n\(shortSummary)\n\n(\(L10n.digestFullVersion))"
                 ))
             }
         }

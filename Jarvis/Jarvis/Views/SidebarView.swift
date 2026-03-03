@@ -3,10 +3,17 @@ import SwiftUI
 // MARK: - App Mode (Work / Personal)
 
 enum AppMode: String, CaseIterable, Identifiable {
-    case work = "Работа"
-    case personal = "Личный"
+    case work = "work"
+    case personal = "personal"
     
     var id: String { rawValue }
+    
+    var localizedName: String {
+        switch self {
+        case .work: return L10n.modeWork
+        case .personal: return L10n.modePersonal
+        }
+    }
     
     var icon: String {
         switch self {
@@ -36,21 +43,39 @@ enum AppMode: String, CaseIterable, Identifiable {
 // MARK: - Navigation Section
 
 enum NavigationSection: String, CaseIterable, Identifiable {
-    case inbox = "Inbox"
-    case today = "Сегодня"
-    case scheduled = "Запланир."
-    case futurePlans = "Планы на будущее"
-    case completed = "Выполнено"
-    case all = "Все задачи"
-    case health = "Здоровье"
-    case calendarSection = "Календарь"
-    case mailSection = "Почта"
-    case messengers = "Мессенджеры"
-    case analytics = "Аналитика"
-    case projects = "Проекты"
-    case chat = "Нейросеть"
+    case inbox = "inbox"
+    case today = "today"
+    case scheduled = "scheduled"
+    case futurePlans = "future_plans"
+    case completed = "completed"
+    case all = "all"
+    case health = "health"
+    case calendarSection = "calendar"
+    case mailSection = "mail"
+    case messengers = "messengers"
+    case analytics = "analytics"
+    case projects = "projects"
+    case chat = "chat"
     
     var id: String { rawValue }
+    
+    var localizedName: String {
+        switch self {
+        case .inbox: return L10n.sectionInbox
+        case .today: return L10n.sectionToday
+        case .scheduled: return L10n.sectionScheduled
+        case .futurePlans: return L10n.sectionFuture
+        case .completed: return L10n.sectionCompleted
+        case .all: return L10n.sectionAll
+        case .health: return L10n.sectionHealth
+        case .calendarSection: return L10n.sectionCalendar
+        case .mailSection: return L10n.sectionMail
+        case .messengers: return L10n.sectionMessengers
+        case .analytics: return L10n.sectionAnalytics
+        case .projects: return L10n.sectionProjects
+        case .chat: return L10n.sectionNeural
+        }
+    }
     
     var icon: String {
         switch self {
@@ -136,8 +161,8 @@ struct SidebarView: View {
                     }
                     .buttonStyle(.plain)
                     .bounceOnTap()
-                    .help("Калькулятор сна")
-                    .accessibilityLabel("Калькулятор сна")
+                    .help(L10n.sleepCalculator)
+                    .accessibilityLabel(L10n.sleepCalculator)
                     
                     Button(action: onShowSettings) {
                         Image(systemName: "gearshape")
@@ -148,15 +173,15 @@ struct SidebarView: View {
                     }
                     .buttonStyle(.plain)
                     .bounceOnTap()
-                    .help("Настройки")
-                    .accessibilityLabel("Настройки")
+                    .help(L10n.tabSettings)
+                    .accessibilityLabel(L10n.tabSettings)
                     
                     Button(action: onShowProfile) {
                         profileAvatar
                     }
                     .buttonStyle(.plain)
                     .bounceOnTap()
-                    .accessibilityLabel("Профиль")
+                    .accessibilityLabel(L10n.profileTitle)
                     
                     Button(action: onHide) {
                         Image(systemName: "sidebar.leading")
@@ -167,8 +192,8 @@ struct SidebarView: View {
                     }
                     .buttonStyle(.plain)
                     .bounceOnTap()
-                    .help("Скрыть панель")
-                    .accessibilityLabel("Скрыть боковую панель")
+                    .help(L10n.hidePanel)
+                    .accessibilityLabel(L10n.hideSidebar)
                 }
             }
             .padding(.horizontal, 14)
@@ -215,7 +240,7 @@ struct SidebarView: View {
                 Divider().background(theme.divider)
                 
                 HStack(spacing: 16) {
-                    miniStatCard(value: store.tasks.count, label: "Всего", color: JarvisTheme.accent)
+                    miniStatCard(value: store.tasks.count, label: L10n.totalTasks, color: JarvisTheme.accent)
                     miniStatCard(value: completionPercentage, label: "%", color: JarvisTheme.accentGreen)
                 }
                 .padding(.horizontal, 16)
@@ -262,7 +287,7 @@ struct SidebarView: View {
                     HStack(spacing: 6) {
                         Image(systemName: mode.icon)
                             .font(.system(size: 12, weight: .semibold))
-                        Text(mode.rawValue)
+                        Text(mode.localizedName)
                             .font(.system(size: 12, weight: appMode == mode ? .bold : .medium))
                     }
                     .foregroundColor(appMode == mode ? .white : theme.textSecondary)
@@ -335,7 +360,7 @@ struct SidebarNavigationRow: View {
                             .fill(isSelected ? section.color : section.color.opacity(0.15))
                     )
                 
-                Text(section.rawValue)
+                Text(section.localizedName)
                     .font(.system(size: 15, weight: isSelected ? .semibold : .medium))
                     .foregroundColor(isSelected ? theme.textPrimary : theme.textSecondary)
                     .lineLimit(1)
@@ -365,7 +390,7 @@ struct SidebarNavigationRow: View {
             .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isSelected)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(section.rawValue)\(count > 0 ? ", \(count)" : "")")
+        .accessibilityLabel("\(section.localizedName)\(count > 0 ? ", \(count)" : "")")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .dockMagnificationEffect()
         .bounceOnTap()

@@ -537,12 +537,12 @@ struct ChartAnalyticsView: View {
     
     private var streakDescription: String {
         switch currentStreak {
-        case 0: return "Начни серию — выполни хотя бы одну задачу сегодня!"
-        case 1...3: return "Хорошее начало! Продолжай."
-        case 4...7: return "Отличная неделя! Так держать."
-        case 8...14: return "Впечатляющая серия!"
-        case 15...30: return "Потрясающая продуктивность!"
-        default: return "Ты — машина! 🔥"
+        case 0: return L10n.streakMotivation0
+        case 1...3: return L10n.streakMotivation1
+        case 4...7: return L10n.streakMotivation7
+        case 8...14: return L10n.streakMotivation14
+        case 15...30: return L10n.streakMotivation21
+        default: return L10n.streakMotivation30
         }
     }
     
@@ -565,7 +565,7 @@ struct ChartAnalyticsView: View {
     }
     
     private var smartSuggestion: String {
-        guard !store.tasks.isEmpty else { return "Пока нет задач. Добавь первую цель на день." }
+        guard !store.tasks.isEmpty else { return L10n.noTasksAdvice }
         
         let completed = store.tasks.lazy.filter(\.isCompleted).count
         let total = store.tasks.count
@@ -573,13 +573,13 @@ struct ChartAnalyticsView: View {
         
         let hourData = productivityByHour
         let peakHour = hourData.max(by: { $0.count < $1.count })
-        let peakHourText = peakHour.map { "Пик продуктивности — в \($0.hour):00." } ?? ""
+        let peakHourText = peakHour.map { "\(L10n.peakProductivity) \($0.hour):00." } ?? ""
         
         switch ratio {
-        case 0.8...: return "Отличный баланс! \(peakHourText) Продолжай в том же духе."
-        case 0.5..<0.8: return "Хороший темп. \(peakHourText) Попробуй дробить задачи на подзадачи."
-        case 0.2..<0.5: return "Много незавершённого. Расставь приоритеты — начни с высоких. \(peakHourText)"
-        default: return "Мало завершённых задач. Начни с мелких — они создают инерцию. \(peakHourText)"
+        case 0.8...: return "\(L10n.adviceGreat) \(peakHourText)"
+        case 0.5..<0.8: return "\(L10n.adviceGood) \(peakHourText)"
+        case 0.2..<0.5: return "\(L10n.adviceMany) \(peakHourText)"
+        default: return "\(L10n.adviceFew) \(peakHourText)"
         }
     }
     

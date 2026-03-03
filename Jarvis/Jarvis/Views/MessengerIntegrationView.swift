@@ -83,18 +83,18 @@ final class MessengerService: ObservableObject {
         } else {
             let formatter = DateFormatter()
             formatter.dateFormat = "dd.MM.yyyy"
-            lines.append("📅 \(formatter.string(from: task.date)) (весь день)")
+            lines.append("📅 \(formatter.string(from: task.date)) (\(L10n.allDay))")
         }
         if task.durationMinutes > 0 {
-            lines.append("⏱ \(task.durationMinutes) мин")
+            lines.append("⏱ \(task.durationMinutes) \(L10n.shareMinutes)")
         }
         if task.priority != .medium {
-            lines.append("❗ Приоритет: \(task.priority.rawValue)")
+            lines.append("❗ \(L10n.sharePriority): \(task.priority.rawValue)")
         }
         if !task.notes.isEmpty {
             lines.append("📝 \(task.notes)")
         }
-        lines.append("\n— Отправлено из Jarvis Planner")
+        lines.append("\n— \(L10n.shareSentFrom)")
         return lines.joined(separator: "\n")
     }
     
@@ -105,7 +105,7 @@ final class MessengerService: ObservableObject {
         dateFormatter.locale = Locale(identifier: "ru_RU")
         
         var lines: [String] = []
-        lines.append("📌 План на \(dateFormatter.string(from: date))")
+        lines.append("📌 \(L10n.sharePlanFor) \(dateFormatter.string(from: date))")
         lines.append("")
         
         let sorted = tasks.sorted { $0.date < $1.date }
@@ -114,13 +114,13 @@ final class MessengerService: ObservableObject {
         
         for task in sorted {
             let status = task.isCompleted ? "✅" : "⬜"
-            let time = task.isAllDay ? "весь день" : timeFormatter.string(from: task.date)
+            let time = task.isAllDay ? L10n.allDay : timeFormatter.string(from: task.date)
             lines.append("\(status) \(time) — \(task.title)")
         }
         
         let completed = tasks.filter(\.isCompleted).count
         lines.append("")
-        lines.append("📊 Выполнено: \(completed)/\(tasks.count)")
+        lines.append("📊 \(L10n.shareCompleted): \(completed)/\(tasks.count)")
         lines.append("\n— Jarvis Planner")
         return lines.joined(separator: "\n")
     }
@@ -130,18 +130,18 @@ final class MessengerService: ObservableObject {
         // Try native app first
         if let appURL = messenger.sendURL(text: text), canOpen(appURL) {
             openURL(appURL)
-            lastShareResult = ShareResult(messenger: messenger, success: true, message: "Открыто в \(messenger.rawValue)")
+            lastShareResult = ShareResult(messenger: messenger, success: true, message: "\(L10n.shareOpenedIn) \(messenger.rawValue)")
             return
         }
         
         // Fallback to web
         if let webURL = messenger.webURL(text: text) {
             openURL(webURL)
-            lastShareResult = ShareResult(messenger: messenger, success: true, message: "Открыта веб-версия \(messenger.rawValue)")
+            lastShareResult = ShareResult(messenger: messenger, success: true, message: "\(L10n.shareWebOpened) \(messenger.rawValue)")
             return
         }
         
-        lastShareResult = ShareResult(messenger: messenger, success: false, message: "\(messenger.rawValue) не установлен")
+        lastShareResult = ShareResult(messenger: messenger, success: false, message: "\(messenger.rawValue) \(L10n.shareNotInstalled)")
     }
     
     /// Share a single task
@@ -187,8 +187,15 @@ struct MessengerShareSheet: View {
     @State private var toastMessage = ""
     
     enum ShareMode: String, CaseIterable {
-        case dailyPlan = "План дня"
-        case singleTask = "Одна задача"
+        case dailyPlan = "daily_plan"
+        case singleTask = "single_task"
+        
+        var localizedName: String {
+            switch self {
+            case .dailyPlan: return L10n.shareDayPlan
+            case .singleTask: return L10n.shareSingleTask
+            }
+        }
     }
     
     private var theme: JarvisTheme {
@@ -199,9 +206,9 @@ struct MessengerShareSheet: View {
         NavigationStack {
             VStack(spacing: 20) {
                 // Mode picker
-                Picker("Режим", selection: $shareMode) {
+                Picker(L10n.shareModePicker, selection: $shareMode) {
                     ForEach(ShareMode.allCases, id: \.self) { mode in
-                        Text(mode.rawValue).tag(mode)
+                        Text(mode.localizedName).tag(mode)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -210,7 +217,7 @@ struct MessengerShareSheet: View {
                 // Task picker (for single task mode)
                 if shareMode == .singleTask {
                     if tasks.isEmpty {
-                        Text("Нет задач для отправки")
+                        Text(L10n.shareNoTasks)
                             .foregroundColor(theme.textSecondary)
                             .padding(.top, 30)
                     } else {
@@ -239,13 +246,13 @@ struct MessengerShareSheet: View {
                 .padding(.bottom, 20)
             }
             .padding(.top)
-            .navigationTitle("Поделиться")
+            .navigationTitle(L10n.shareTitle)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Закрыть") { dismiss() }
+                    Button(L10n.shareClose) { dismiss() }
                 }
             }
             .overlay(alignment: .bottom) {
@@ -343,7 +350,7 @@ struct MessengerShareSheet: View {
                 messenger.shareTask(first, via: type)
             }
         }
-        toastMessage = messenger.lastShareResult?.message ?? "Отправлено"
+        toastMessage = messenger.lastShareResult?.message ?? L10n.shareSent
         withAnimation(.spring(response: 0.3)) { showToast = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             withAnimation { showToast = false }

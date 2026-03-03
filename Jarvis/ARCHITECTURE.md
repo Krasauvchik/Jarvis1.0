@@ -1,6 +1,6 @@
 # Jarvis Planner — Architecture Documentation
 
-> **Version:** 2.1 · **Updated:** March 2026 · **Platform:** iOS 16+ / macOS 13+ / watchOS 9+
+> **Version:** 3.0 · **Updated:** March 2026 · **Platform:** iOS 16+ / macOS 13+ / watchOS 9+
 
 ## Overview
 
@@ -194,28 +194,30 @@ Jarvis/
 ┌────────────┐
 │ AIManager  │──── selectedModel ────┐
 └────────────┘                       │
-      │                              ▼
-      ├── .heuristic ──▶ HeuristicAdapter (offline, instant)
-      ├── .ollama ─────▶ Ollama HTTP API (localhost:11434)
-      ├── .gemini ─────▶ Backend /llm/plan
-      └── .cloudGPT ───▶ Backend /llm/plan
-                   │
-                   ▼ (intent routing)
-      ┌────────────┼─────────────┬──────────────┬───────────────┐
-      │            │             │              │               │
-   context     briefing       coaching     delegation      general
-      ▼            ▼             ▼              ▼               ▼
+        │                              ▼
+        ├── .heuristic ──▶ HeuristicAdapter (offline, instant)
+        ├── .ollama ─────▶ Backend /ai/* → Ollama (localhost:11434)
+        ├── .cloudGPT ───▶ Backend /ai/* → Cloud LLM → Ollama → heuristic
+        ├── .gemini ─────▶ (reserved, backend-based)
+        └── .onDeviceLarge ▶ Local / Ollama-like (future)
+                         │
+                         ▼ (intent routing)
+        ┌────────────┼─────────────┬──────────────┬───────────────┐
+        │            │             │              │               │
+    context     briefing       coaching     delegation      general
+        ▼            ▼             ▼              ▼               ▼
  AIContext    MeetingBrief   AILifeCoach   /ai/delegate    sendCommand
   Engine       Service                      -task
 ```
 
-- **HeuristicAdapter:** Extracts tasks from natural language (Russian + English), pattern matching for time/dates
-- **Ollama:** Local LLM via HTTP (`/api/generate` and `/api/chat`), configurable model and base URL
-- **AIContextEngine:** Cross-source semantic search across tasks, calendar, mail
-- **MeetingBriefingService:** Generates briefings for upcoming meetings (participants, agenda, context)
-- **AILifeCoach:** Personal coaching (fitness, nutrition, learning, meditation categories)
-- **Intent Routing:** `AIManager.detectIntent()` classifies user messages into 5 intents: contextSearch, meetingBriefing, coaching, delegation, general
-- **Chat:** Currently Ollama-only for full dialog mode
+- **HeuristicAdapter:** Extracts tasks from natural language (Russian + English), pattern matching for time/dates.
+- **Cloud LLM (Cloud GPT/GPT‑class):** Configured on backend via env (`JARVIS_CLOUD_LLM_API_KEY`, `JARVIS_CLOUD_LLM_MODEL`, `JARVIS_CLOUD_LLM_BASE_URL`) и используется как первый слой для `/llm/plan`, `/llm/chat`, `/ai/command`, `/ai/digest`, Telegram/WhatsApp дайджестов.
+- **Ollama:** Local LLM via HTTP (`/api/generate` and `/api/chat`), configurable model and base URL; служит fallback’ом, если Cloud LLM недоступен, и основным движком в локальном режиме.
+- **AIContextEngine:** Cross-source semantic search across tasks, calendar, mail, messengers (через backend `/ai/context-search`).
+- **MeetingBriefingService:** Generates briefings for upcoming meetings (participants, agenda, context) через `/ai/meeting-briefing` → LLM.
+- **AILifeCoach:** Personal coaching (fitness, nutrition, learning, meditation categories) поверх LLM.
+- **Intent Routing:** `AIManager.detectIntent()` classifies user messages into 5 intents: contextSearch, meetingBriefing, coaching, delegation, standard.
+- **Chat:** Работает через backend `/llm/chat`, который сначала использует Cloud LLM, а затем Ollama как fallback.
 
 ---
 
@@ -588,13 +590,23 @@ LLMDigestService.generateDigest()
 - [x] AIWelcomeHeader on Today tab
 - [x] Voice-first UI (mic button, speech recognition, auto-execute)
 
-### Phase 6 — Production Readiness (Next)
-- [ ] HTTPS backend migration (TLS certificates)
-- [ ] App Store preparation (metadata, screenshots, review)
-- [ ] Full L10n wiring (all hardcoded strings → L10n)
-- [ ] CloudKit migration (remove 1MB limit)
-- [ ] Actual Telegram/WhatsApp message sending for delegation
-- [ ] Unit test coverage expansion (target: 80%+)
-- [ ] Performance profiling (Instruments: Core Animation, Time Profiler)
-- [ ] Crash analytics integration (Sentry or Firebase Crashlytics)
+### Phase 6 — Production Readiness ✅
+- [x] Full L10n wiring — 580+ keys in Localization.swift, wired in 15+ view files
+- [x] Localization updated — Localizable.xcstrings with 795 entries (ru + en)
+- [x] NavigationSection & AppMode enums use localizedName (no hardcoded Russian rawValues)
+- [x] HTTPS backend — TLS certificates (self-signed), uvicorn --ssl, all endpoints https://
+- [x] Unit tests expanded — 92 tests (PlannerStore, L10n, NavigationSection, AppMode, Wellness, Crash, Logger, etc.)
+- [x] Performance tracker — PerformanceTracker (span timing, metrics, slow-op warnings)
+- [x] Crash reporter — CrashReporter (signal handlers, exception handler, non-fatal recording, local report storage)
+- [x] App launch tracker — AppLaunchTracker (cold launch time, session count)
+- [x] App Store preparation — Info.plist (privacy descriptions, ATS exceptions, productivity category)
+- [x] ATS exceptions for localhost (Ollama), backend IP, domain
+- [x] NSLocalNetworkUsageDescription for Ollama LLM access
 
+### Phase 7 — Future Enhancements
+- [ ] CloudKit migration (remove 1MB NSUbiquitousKeyValueStore limit)
+- [ ] Actual Telegram/WhatsApp delegation message sending
+- [ ] Firebase/Sentry cloud crash analytics (currently local-only)
+- [ ] Performance profiling with Instruments (Core Animation, Time Profiler)
+- [ ] App Store screenshots and preview video
+- [ ] TestFlight beta distribution

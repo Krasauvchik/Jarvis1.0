@@ -14,7 +14,7 @@ struct MailView: View {
                 JarvisTheme.background.ignoresSafeArea()
                 contentView
             }
-            .navigationTitle("Почта")
+            .navigationTitle(L10n.mailTitle)
             .toolbar { toolbarContent }
             .task { await checkAuth() }
             .refreshable {
@@ -27,7 +27,7 @@ struct MailView: View {
     @ViewBuilder
     private var contentView: some View {
         if checkingAuth {
-            ProgressView("Проверка...")
+            ProgressView(L10n.checking)
         } else if !isAuthorized {
             authPromptView
         } else if let err = errorMessage {
@@ -62,7 +62,7 @@ struct MailView: View {
                 .multilineTextAlignment(.center)
                 .foregroundStyle(JarvisTheme.textSecondary)
                 .padding()
-            Button("Повторить") { Task { await loadMail() } }
+            Button(L10n.retry) { Task { await loadMail() } }
                 .buttonStyle(PrimaryButtonStyle())
                 .bounceOnTap()
         }
@@ -75,7 +75,7 @@ struct MailView: View {
             Image(systemName: "envelope.badge")
                 .font(.system(size: 48))
                 .foregroundStyle(JarvisTheme.textSecondary)
-            Text("Нет писем")
+            Text(L10n.noMails)
                 .font(.headline)
                 .foregroundStyle(JarvisTheme.textSecondary)
         }
@@ -87,17 +87,17 @@ struct MailView: View {
             Image(systemName: "envelope.badge")
                 .font(.system(size: 64))
                 .foregroundStyle(JarvisTheme.accent)
-            Text("Подключите Google")
+            Text(L10n.connectGoogle)
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(JarvisTheme.textPrimary)
-            Text("Войдите в аккаунт Google, чтобы видеть письма.")
+            Text(L10n.connectGoogleMailDesc)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(JarvisTheme.textSecondary)
                 .padding(.horizontal)
             Button {
                 AuthService.shared.openAuthInBrowser()
             } label: {
-                Label("Войти через Google", systemImage: "link")
+                Label(L10n.signInGoogle, systemImage: "link")
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
             }
@@ -141,7 +141,7 @@ struct MailView: View {
         do {
             messages = try await MailService.shared.fetchMessages(maxResults: 15)
         } catch MailError.notAuthorized(let msg) {
-            errorMessage = msg ?? "Требуется авторизация"
+            errorMessage = msg ?? L10n.authRequired
             messages = []
         } catch {
             errorMessage = error.localizedDescription
@@ -155,7 +155,7 @@ struct MailMessageRow: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(message.subject.isEmpty ? "(Без темы)" : message.subject)
+            Text(message.subject.isEmpty ? L10n.noSubject : message.subject)
                 .font(.headline)
                 .foregroundStyle(JarvisTheme.textPrimary)
                 .lineLimit(1)

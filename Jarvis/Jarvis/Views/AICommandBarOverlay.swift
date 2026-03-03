@@ -58,7 +58,7 @@ struct AICommandBar: View {
                 AIChatView(aiManager: aiManager)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("Готово") { showFullChat = false }
+                            Button(L10n.done) { showFullChat = false }
                         }
                     }
             }
@@ -83,7 +83,7 @@ struct AICommandBar: View {
 
             if isExpanded {
                 // Text input
-                TextField("Спросите Jarvis...", text: $inputText)
+                TextField(L10n.askJarvis, text: $inputText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14))
                     .padding(.horizontal, 12)
@@ -134,7 +134,7 @@ struct AICommandBar: View {
                         Image(systemName: "sparkles")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(JarvisTheme.accentPurple)
-                        Text("Спросите Jarvis...")
+                        Text(L10n.askJarvis)
                             .font(.system(size: 13))
                             .foregroundColor(theme.textTertiary)
                         Spacer()
@@ -156,7 +156,7 @@ struct AICommandBar: View {
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help("Открыть полный AI-чат")
+                .help(L10n.openFullChat)
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isExpanded)
@@ -192,7 +192,7 @@ struct AICommandBar: View {
             .frame(width: 42, height: 42)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(speech.isRecording ? "Остановить запись" : "Голосовая команда")
+        .accessibilityLabel(speech.isRecording ? L10n.stopRecording : L10n.voiceCommand)
         .onAppear { pulseAnimation = true }
         .disabled(isProcessing)
     }
@@ -202,23 +202,23 @@ struct AICommandBar: View {
     private var quickActionChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                chip(icon: "doc.text.magnifyingglass", text: "Выдержка", color: JarvisTheme.accentPurple) {
-                    inputText = "Подготовь выдержку по ближайшей встрече"
+                chip(icon: "doc.text.magnifyingglass", text: L10n.chipBriefing, color: JarvisTheme.accentPurple) {
+                    inputText = L10n.promptBriefing
                     sendQuickCommand()
                 }
-                chip(icon: "magnifyingglass", text: "Поиск", color: JarvisTheme.accentBlue) {
-                    inputText = "Найди всё по теме "
+                chip(icon: "magnifyingglass", text: L10n.chipSearch, color: JarvisTheme.accentBlue) {
+                    inputText = L10n.promptSearch
                 }
-                chip(icon: "text.badge.star", text: "Обзор дня", color: JarvisTheme.accentGreen) {
-                    inputText = "Покажи обзор моего дня"
+                chip(icon: "text.badge.star", text: L10n.chipDayOverview, color: JarvisTheme.accentGreen) {
+                    inputText = L10n.promptDayOverview
                     sendQuickCommand()
                 }
-                chip(icon: "figure.run", text: "Коуч", color: JarvisTheme.accentOrange) {
-                    inputText = "Дай план тренировки на сегодня"
+                chip(icon: "figure.run", text: L10n.chipCoach, color: JarvisTheme.accentOrange) {
+                    inputText = L10n.promptCoach
                     sendQuickCommand()
                 }
-                chip(icon: "paperplane.fill", text: "Делегировать", color: JarvisTheme.accentTeal) {
-                    inputText = "Поставь задачу пользователю "
+                chip(icon: "paperplane.fill", text: L10n.chipDelegate, color: JarvisTheme.accentTeal) {
+                    inputText = L10n.promptDelegate
                 }
             }
             .padding(.horizontal, 2)
@@ -257,7 +257,7 @@ struct AICommandBar: View {
                     .lineLimit(4)
                     .textSelection(.enabled)
 
-                Button("Открыть в чате") {
+                Button(L10n.openInChat) {
                     showFullChat = true
                     quickResponse = nil
                 }
@@ -349,10 +349,10 @@ struct AIWelcomeHeader: View {
 
     private var greeting: String {
         let hour = Calendar.current.component(.hour, from: Date())
-        if hour < 6 { return "Доброй ночи" }
-        if hour < 12 { return "Доброе утро" }
-        if hour < 18 { return "Добрый день" }
-        return "Добрый вечер"
+        if hour < 6 { return L10n.greetingNight }
+        if hour < 12 { return L10n.greetingMorning }
+        if hour < 18 { return L10n.greetingAfternoon }
+        return L10n.greetingEvening
     }
 
     var body: some View {
@@ -374,11 +374,11 @@ struct AIWelcomeHeader: View {
             }
 
             VStack(alignment: .leading, spacing: 1) {
-                Text("\(greeting), \(userProfile.name.isEmpty ? "пользователь" : userProfile.name)!")
+                Text("\(greeting), \(userProfile.name.isEmpty ? L10n.defaultUserName : userProfile.name)!")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(theme.textPrimary)
 
-                Text("Говорите или пишите — Jarvis поможет")
+                Text(L10n.jarvisHelperSubtitle)
                     .font(.system(size: 12))
                     .foregroundColor(theme.textSecondary)
             }

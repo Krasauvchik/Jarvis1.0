@@ -9,6 +9,9 @@ struct JarvisApp: App {
     @Environment(\.scenePhase) private var scenePhase
     
     init() {
+        // Activate crash reporter early
+        CrashReporter.shared.activate()
+        
         NSUbiquitousKeyValueStore.default.synchronize()
         // Trigger one-time migration from UserDefaults → SwiftData
         Task { @MainActor in

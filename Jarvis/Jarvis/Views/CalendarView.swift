@@ -14,7 +14,7 @@ struct CalendarView: View {
                 JarvisTheme.background.ignoresSafeArea()
                 contentView
             }
-            .navigationTitle("Календарь")
+            .navigationTitle(L10n.calendarTitle)
             .toolbar { toolbarContent }
             .task { await checkAuth() }
             .refreshable {
@@ -27,7 +27,7 @@ struct CalendarView: View {
     @ViewBuilder
     private var contentView: some View {
         if checkingAuth {
-            ProgressView("Проверка...")
+            ProgressView(L10n.checking)
         } else if !isAuthorized {
             authPromptView
         } else if let err = errorMessage {
@@ -62,7 +62,7 @@ struct CalendarView: View {
                 .multilineTextAlignment(.center)
                 .foregroundStyle(JarvisTheme.textSecondary)
                 .padding()
-            Button("Повторить") { Task { await loadEvents() } }
+            Button(L10n.retry) { Task { await loadEvents() } }
                 .buttonStyle(PrimaryButtonStyle())
                 .bounceOnTap()
         }
@@ -75,7 +75,7 @@ struct CalendarView: View {
             Image(systemName: "calendar.badge.exclamationmark")
                 .font(.system(size: 48))
                 .foregroundStyle(JarvisTheme.textSecondary)
-            Text("Нет событий")
+            Text(L10n.noEvents)
                 .font(.headline)
                 .foregroundStyle(JarvisTheme.textSecondary)
         }
@@ -87,17 +87,17 @@ struct CalendarView: View {
             Image(systemName: "calendar.badge.plus")
                 .font(.system(size: 64))
                 .foregroundStyle(JarvisTheme.accent)
-            Text("Подключите Google")
+            Text(L10n.connectGoogle)
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(JarvisTheme.textPrimary)
-            Text("Войдите в аккаунт Google, чтобы видеть события календаря и почту.")
+            Text(L10n.connectGoogleCalDesc)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(JarvisTheme.textSecondary)
                 .padding(.horizontal)
             Button {
                 AuthService.shared.openAuthInBrowser()
             } label: {
-                Label("Войти через Google", systemImage: "link")
+                Label(L10n.signInGoogle, systemImage: "link")
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
             }

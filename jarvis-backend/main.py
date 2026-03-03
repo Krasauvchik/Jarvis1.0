@@ -15,6 +15,55 @@ import google_auth
 from google_services import GoogleCalendarService, GmailService
 
 # ---------------------------------------------------------------------------
+# LLM configuration (Cloud GPT + Ollama)
+# ---------------------------------------------------------------------------
+
+CL0UD_LLM_API_KEY = os.getenv("JARVIS_CLOUD_LLM_API_KEY")  # e.g. OpenAI key
+CL0UD_LLM_MODEL = os.getenv("JARVIS_CLOUD_LLM_MODEL", "gpt-4.1-mini")
+CL0UD_LLM_BASE_URL = os.getenv("JARVIS_CLOUD_LLM_BASE_URL", "https://api.openai.com/v1")
+
+
+def _cloud_llm_enabled() -> bool:
+    """Return True if Cloud LLM is configured via environment variables."""
+    return bool(CL0UD_LLM_API_KEY)
+
+
+async def _cloud_chat(messages: list, json_mode: bool = False, timeout: float = 60.0) -> Optional[str]:
+    """Call Cloud LLM (OpenAI-compatible) and return assistant content string.
+
+    messages: list of {"role", "content"} dicts.
+    If json_mode=True, we request structured JSON response.
+    """
+    if not _cloud_llm_enabled():
+        return None
+
+    import httpx
+
+    headers = {
+        "Authorization": f"Bearer {CL0UD_LLM_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    body: dict = {
+        "model": CL0UD_LLM_MODEL,
+        "messages": messages,
+        "temperature": 0.2,
+    }
+    if json_mode:
+        # JSON schema-agnostic: just ask for a JSON object
+        body["response_format"] = {"type": "json_object"}
+
+    async with httpx.AsyncClient(timeout=timeout, base_url=CL0UD_LLM_BASE_URL) as client:
+        r = await client.post("/chat/completions", json=body, headers=headers)
+        r.raise_for_status()
+        data = r.json()
+        choices = data.get("choices") or []
+        if not choices:
+            return None
+        msg = choices[0].get("message") or {}
+        content = msg.get("content")
+        return content.strip() if isinstance(content, str) else None
+
+# ---------------------------------------------------------------------------
 # App & logging
 # ---------------------------------------------------------------------------
 
@@ -240,7 +289,12 @@ async def llm_plan(payload: PlanPayload):
     tasks = payload.tasks
     total = len(tasks)
     completed = sum(1 for t in tasks if t.isCompleted)
+    # 1) Cloud LLM (если настроен)
+    cloud_result = await _ask_cloud_plan(tasks)
+    if cloud_result:
+        return {"advice": cloud_result, "source": "cloud"}
 
+    # 2) Локальная Ollama
     ollama_result = await _ask_ollama_plan(tasks)
     if ollama_result:
         return {"advice": ollama_result, "source": "ollama"}
@@ -261,14 +315,27 @@ async def llm_plan(payload: PlanPayload):
 
 @app.post("/llm/chat")
 async def llm_chat(request: Request):
+    """Unified chat endpoint: Cloud LLM → Ollama fallback."""
     body = await request.json()
+
+    # Try Cloud LLM first if configured
+    if _cloud_llm_enabled():
+        messages = body.get("messages") or []
+        try:
+            text = await _cloud_chat(messages, json_mode=False, timeout=120.0)
+            if text is not None:
+                return {"message": {"role": "assistant", "content": text}}
+        except Exception as e:  # noqa: BLE001
+            log.error(f"Cloud LLM chat error: {e}")
+
+    # Fallback: proxy to local Ollama
     import httpx
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             r = await client.post("http://localhost:11434/api/chat", json=body)
             r.raise_for_status()
             return r.json()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         log.error(f"LLM chat proxy error: {e}")
         raise HTTPException(502, detail=f"Ollama unavailable: {e}")
 
@@ -298,6 +365,32 @@ async def _ask_ollama_plan(tasks: List[Task]) -> Optional[str]:
     except Exception as e:
         log.warning(f"Ollama plan request failed: {e}")
     return None
+
+
+async def _ask_cloud_plan(tasks: List[Task]) -> Optional[str]:
+    """Ask Cloud LLM for planning advice, if configured."""
+    if not _cloud_llm_enabled() or not tasks:
+        return None
+
+    task_list = "\n".join(
+        f"- {'[✓]' if t.isCompleted else '[ ]'} {t.title}" + (f" ({t.notes})" if t.notes else "")
+        for t in tasks[:20]
+    )
+    prompt = f"""Ты — умный AI-планировщик Jarvis. Проанализируй задачи и дай 3-5 кратких советов по-русски.
+Задачи: {task_list}
+Выполнено: {sum(1 for t in tasks if t.isCompleted)}/{len(tasks)}
+Время: {datetime.now().strftime('%H:%M')}
+Советы:"""
+
+    messages = [
+        {"role": "system", "content": "Ты — Jarvis, личный AI-планировщик."},
+        {"role": "user", "content": prompt},
+    ]
+    try:
+        return await _cloud_chat(messages, json_mode=False, timeout=30.0)
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"Cloud plan request failed: {e}")
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -359,7 +452,30 @@ Google подключён: {"да" if google_connected else "нет"}
 8. Можно выполнять несколько actions за раз.
 
 Отвечай ТОЛЬКО валидным JSON."""
+    # 1) Cloud LLM with JSON output, if configured
+    if _cloud_llm_enabled():
+        try:
+            ai_text = await _cloud_chat(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": message},
+                ],
+                json_mode=True,
+                timeout=60.0,
+            )
+            if ai_text is None:
+                raise RuntimeError("Empty Cloud LLM response")
+            try:
+                parsed = json.loads(ai_text)
+            except json.JSONDecodeError:
+                parsed = {"response": ai_text, "actions": []}
 
+            _execute_server_side_actions(parsed)
+            return parsed
+        except Exception as e:  # noqa: BLE001
+            log.error(f"Cloud AI command error, falling back to Ollama: {e}")
+
+    # 2) Fallback: Ollama JSON chat
     import httpx
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -379,56 +495,67 @@ Google подключён: {"да" if google_connected else "нет"}
                 except json.JSONDecodeError:
                     parsed = {"response": ai_text, "actions": []}
 
-                # Execute Google actions server-side
-                creds = google_auth.get_credentials()
-                executed = []
-                for action in parsed.get("actions", []):
-                    atype = action.get("type", "none")
-                    params = action.get("params", {})
-
-                    if atype == "create_event" and creds:
-                        try:
-                            cal = GoogleCalendarService(creds)
-                            ev = cal.create_event(
-                                summary=params.get("summary", ""),
-                                start_iso=params.get("start", ""),
-                                end_iso=params.get("end", ""),
-                            )
-                            executed.append({"type": atype, "status": "success", "event_id": ev.get("id")})
-                        except Exception as exc:
-                            executed.append({"type": atype, "status": "error", "error": str(exc)})
-
-                    elif atype == "send_email" and creds:
-                        try:
-                            gmail = GmailService(creds)
-                            gmail.send_message(to=params.get("to", ""), subject=params.get("subject", ""), body=params.get("body", ""))
-                            executed.append({"type": atype, "status": "success"})
-                        except Exception as exc:
-                            executed.append({"type": atype, "status": "error", "error": str(exc)})
-
-                    elif atype in ("show_calendar", "show_mail") and creds:
-                        try:
-                            if atype == "show_calendar":
-                                cal = GoogleCalendarService(creds)
-                                data = cal.list_events(days_ahead=params.get("days", 7))
-                            else:
-                                gmail = GmailService(creds)
-                                data = gmail.list_messages(max_results=params.get("max_results", 10), query=params.get("query", ""))
-                            executed.append({"type": atype, "status": "success", "data": data})
-                        except Exception as exc:
-                            executed.append({"type": atype, "status": "error", "error": str(exc)})
-                    else:
-                        executed.append({"type": atype, "status": "pending", "params": params})
-
-                parsed["executed"] = executed
+                _execute_server_side_actions(parsed)
                 return parsed
-            else:
-                raise HTTPException(502, detail="Ollama returned error")
+            raise HTTPException(502, detail="Ollama returned error")
     except httpx.ConnectError:
         raise HTTPException(502, detail="Ollama не запущена. Запустите: ollama serve")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         log.error(f"AI command error: {e}")
         raise HTTPException(500, detail=str(e))
+
+
+def _execute_server_side_actions(parsed: dict) -> None:
+    """Execute calendar/mail actions on the server (shared for all LLMs)."""
+    creds = google_auth.get_credentials()
+    executed = []
+
+    for action in parsed.get("actions", []) or []:
+        atype = action.get("type", "none")
+        params = action.get("params", {}) or {}
+
+        if atype == "create_event" and creds:
+            try:
+                cal = GoogleCalendarService(creds)
+                ev = cal.create_event(
+                    summary=params.get("summary", ""),
+                    start_iso=params.get("start", ""),
+                    end_iso=params.get("end", ""),
+                )
+                executed.append({"type": atype, "status": "success", "event_id": ev.get("id")})
+            except Exception as exc:  # noqa: BLE001
+                executed.append({"type": atype, "status": "error", "error": str(exc)})
+
+        elif atype == "send_email" and creds:
+            try:
+                gmail = GmailService(creds)
+                gmail.send_message(
+                    to=params.get("to", ""),
+                    subject=params.get("subject", ""),
+                    body=params.get("body", ""),
+                )
+                executed.append({"type": atype, "status": "success"})
+            except Exception as exc:  # noqa: BLE001
+                executed.append({"type": atype, "status": "error", "error": str(exc)})
+
+        elif atype in ("show_calendar", "show_mail") and creds:
+            try:
+                if atype == "show_calendar":
+                    cal = GoogleCalendarService(creds)
+                    data = cal.list_events(days_ahead=params.get("days", 7))
+                else:
+                    gmail = GmailService(creds)
+                    data = gmail.list_messages(
+                        max_results=params.get("max_results", 10),
+                        query=params.get("query", ""),
+                    )
+                executed.append({"type": atype, "status": "success", "data": data})
+            except Exception as exc:  # noqa: BLE001
+                executed.append({"type": atype, "status": "error", "error": str(exc)})
+        else:
+            executed.append({"type": atype, "status": "pending", "params": params})
+
+    parsed["executed"] = executed
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +625,23 @@ async def ai_digest(payload: DigestPayload):
 
 Будь конкретен и полезен. Отвечай по-русски."""
 
+    # 1) Cloud LLM, если доступен
+    if _cloud_llm_enabled():
+        try:
+            text = await _cloud_chat(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": full_context},
+                ],
+                json_mode=False,
+                timeout=60.0,
+            )
+            if text:
+                return {"summary": text}
+        except Exception as e:  # noqa: BLE001
+            log.error(f"Cloud digest error, falling back to Ollama: {e}")
+
+    # 2) Fallback: Ollama
     import httpx
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -512,12 +656,11 @@ async def ai_digest(payload: DigestPayload):
             if r.status_code == 200:
                 text = r.json().get("message", {}).get("content", "").strip()
                 return {"summary": text if text else "Не удалось сгенерировать выдержку."}
-            else:
-                raise HTTPException(502, detail="Ollama error")
+            raise HTTPException(502, detail="Ollama error")
     except httpx.ConnectError:
         # Fallback: return raw context
         return {"summary": f"⚠️ Ollama недоступна. Сырые данные:\n\n{full_context[:2000]}"}
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         log.error(f"AI digest error: {e}")
         raise HTTPException(500, detail=str(e))
 
@@ -692,7 +835,7 @@ async def whatsapp_disconnect():
 # --- Shared: LLM summarization for messenger digests ---
 
 async def _summarize_messenger_digest(source: str, raw_text: str) -> str:
-    """Send raw messenger messages to Ollama for summarization."""
+    """Summarize messenger messages via Cloud LLM → Ollama → raw fallback."""
     system_prompt = f"""Ты — Jarvis, AI-ассистент. Проанализируй сообщения из {source} и сделай краткую выдержку.
 
 Формат:
@@ -707,6 +850,23 @@ async def _summarize_messenger_digest(source: str, raw_text: str) -> str:
 - Игнорируй спам, стикеры, мелкие реплики
 - Отвечай по-русски, кратко и полезно"""
 
+    # 1) Cloud LLM
+    if _cloud_llm_enabled():
+        try:
+            text = await _cloud_chat(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": raw_text[:8000]},
+                ],
+                json_mode=False,
+                timeout=90.0,
+            )
+            if text:
+                return text
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"Cloud LLM summarization for {source} failed: {e}")
+
+    # 2) Fallback: Ollama
     import httpx
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
@@ -721,10 +881,10 @@ async def _summarize_messenger_digest(source: str, raw_text: str) -> str:
             if r.status_code == 200:
                 text = r.json().get("message", {}).get("content", "").strip()
                 return text if text else f"Не удалось сгенерировать выдержку {source}."
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         log.warning(f"LLM summarization for {source} failed: {e}")
 
-    # Fallback: return truncated raw text
+    # 3) Fallback: return truncated raw text
     return f"⚠️ LLM недоступна. Сырые данные {source}:\n\n{raw_text[:2000]}"
 
 
@@ -737,56 +897,123 @@ class ContextSearchPayload(BaseModel):
     lookback_days: int = 30
     sources: dict = {}
 
+
 @app.post("/ai/context-search")
 async def ai_context_search(payload: ContextSearchPayload):
-    """Search across all connected sources (calendar, mail, Telegram, WhatsApp)."""
-    query = payload.query.lower()
-    lookback = payload.lookback_days
+    """Search across all connected sources (calendar, mail, Telegram, WhatsApp).
+
+    Returned JSON structure matches what AIContextEngine expects on the client.
+    """
+
+    query = (payload.query or "").strip().lower()
+    lookback = max(1, min(payload.lookback_days, 90))
+
     results = {
         "calendar_matches": [],
         "mail_matches": [],
         "telegram_matches": [],
         "whatsapp_matches": [],
     }
-    
+
+    if not query:
+        return results
+
     creds = google_auth.get_credentials()
-    
-    # Calendar search
+
+    # Calendar search (Google Calendar)
     if payload.sources.get("calendar", True) and creds:
         try:
             cal = GoogleCalendarService(creds)
-            events = cal.list_events(days_ahead=lookback, max_r            events = cal.list_events(days_ahead=lookback, max_r    ev.g            events = cal.list_events(days_ahead=lookback, max_r           n",             events = cal.list_events(days_es            events = cal.list_events(days_ahead=lookback, max_r         ery in             events = cal.list_ever() fo         tendee            events = c  resu           ar_matches"].            events = cal.list_              events = cal.list_events(days_ahead=lookback: ev            events = cal.list_events(days_ahead=lookback, max_r            events               events = cal.list_str(            events = cal.list_ev                "notes": ev.get("description", "")[:5            events = ction")            events = cal.l                  events = cal.list_ title else 0.6,
-                    })
-        except Exception as e:
+            events = cal.list_events(days_ahead=lookback, max_results=100)
+            for ev in events:
+                text = " ".join(
+                    [
+                        str(ev.get("title", "")),
+                        str(ev.get("notes") or ""),
+                        str(ev.get("location") or ""),
+                    ]
+                ).lower()
+                if query in text:
+                    results["calendar_matches"].append(
+                        {
+                            "id": ev.get("id", ""),
+                            "title": ev.get("title", ""),
+                            "date": ev.get("startDate", "") or "",
+                            "attendees": [],  # Not available in current wrapper
+                            "notes": ev.get("notes") or "",
+                            "relevance": 0.8,
+                        }
+                    )
+        except Exception as e:  # noqa: BLE001
             log.warning(f"Context search calendar error: {e}")
-                search
-    if payload.sources.get("mail", True)     if payload.sources.get("mail", True)     if payload.sources.get("mail", True)     if payload.sources.get("mail", True)     if payload.sources.get("mail", True)     if payload.sources.get("mail", True)     if payload.sources.get("mail", True)     if payload.sources.get("mail", True)     if payload.sources.get("mail", True)     if payload.sources.get("mail", True)     if payload.sources.get("mail", True)     if payload.sources.get("mail", True)     if payload.sources.get("mail", True)     if payload.sources.get("mail", True)     if payload.sources.get("mail", True)     if payload.sources.get("mail", True)     if payload.sources.get("mail", True)     if payload.sources.get("mail", True)     if payload.sources.get("mail", True)     if payload.sources.get("mail", True)     if payload.sources.get("mail", True)     if payload.source      if payload.sounes:
-    if payload.sources.get( line.lower():
-                    results["telegram_matches"].append({
-                        "source": "telegram",
-                        "chat_name": "Telegram",
-                        "sender_name": "",
-                        "message_text": line[:300],
-                        "date": "",
-                        "relevance": 0.7,
-                    })
-        except Exception as e:
+
+    # Mail search (Gmail)
+    if payload.sources.get("mail", True) and creds:
+        try:
+            gmail = GmailService(creds)
+            # Use Gmail's own search syntax with the query string
+            messages = gmail.list_messages(max_results=50, query=query)
+            for m in messages:
+                haystack = " ".join(
+                    [
+                        str(m.get("subject", "")),
+                        str(m.get("from", "")),
+                        str(m.get("snippet", "")),
+                    ]
+                ).lower()
+                if query not in haystack:
+                    continue
+                results["mail_matches"].append(
+                    {
+                        "id": m.get("id", ""),
+                        "subject": m.get("subject", ""),
+                        "from": m.get("from", ""),
+                        "date": m.get("date", ""),
+                        "snippet": m.get("snippet", ""),
+                        "relevance": 0.8,
+                    }
+                )
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"Context search mail error: {e}")
+
+    # Telegram search (by text in digest)
+    if payload.sources.get("telegram", False) and _telegram.selected_chat_ids:
+        try:
+            raw = await _telegram.generate_digest_text(hours=min(lookback * 24, 168))
+            for line in raw.split("\n"):
+                if query in line.lower():
+                    results["telegram_matches"].append(
+                        {
+                            "source": "telegram",
+                            "chat_name": "Telegram",
+                            "sender_name": "",
+                            "message_text": line[:300],
+                            "date": "",
+                            "relevance": 0.7,
+                        }
+                    )
+        except Exception as e:  # noqa: BLE001
             log.warning(f"Context search Telegram error: {e}")
-    
-    # WhatsApp search
+
+    # WhatsApp search (by text in digest)
     if payload.sources.get("whatsapp", False) and _whatsapp.selected_chat_ids:
         try:
             raw = await _whatsapp.generate_digest_text()
-            lines = raw.split("\n")
-            for line in lines:
+            for line in raw.split("\n"):
                 if query in line.lower():
-                    results["whatsapp_matches"].append({
-                        "source": "whatsapp",
-                        "chat_name": "WhatsApp",
-                        "sender_name": "",
-                        "message_text": line[:300],
-                                                                                                             except Exception as e:
-            log.warni            log.warni            log.warni    
+                    results["whatsapp_matches"].append(
+                        {
+                            "source": "whatsapp",
+                            "chat_name": "WhatsApp",
+                            "sender_name": "",
+                            "message_text": line[:300],
+                            "date": "",
+                            "relevance": 0.7,
+                        }
+                    )
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"Context search WhatsApp error: {e}")
+
     return results
 
 
@@ -794,72 +1021,128 @@ async def ai_context_search(payload: ContextSearchPayload):
 # AI MEETING BRIEFING — Cross-source meeting preparation
 # ---------------------------------------------------------------------------
 
+
 class MeetingBriefingPayload(BaseModel):
     meeting_title: str
     meeting_date: str = ""
     participants: List[str] = []
     description: str = ""
-    context: str = ""
+    context: str = ""  # Prebuilt context from client (optional)
+
 
 @app.post("/ai/meeting-briefing")
 async def ai_meeting_briefing(payload: MeetingBriefingPayload):
-    """Generate structured meeting briefing from all available sources."""
-    
-    # Step 1: Search all sources for meeting-related info
-    search_payload = ContextSearchPayload(
-        query=payload.meeting_title,
-        lookback_days=30,
-        sources={"calendar": True, "mail": True, "telegram": True, "whatsapp": True},
-    )
-    search_results = await ai_context_search(search_payload)
-    
-    # Also search by each participant
-    for participant in pay    for participant in pay    for participant in pay    for partici        for participant in pay    for participant in pay    for participant in p"c    for participant in pay    for participant in pay    p": True},
-        )
-        p_results = await ai_context_search(p_payload)
-                                                                rch_re                                                         ten                     []))
-                   Buil                   Buil     t = pa                   Buil                   Buil     t = pa    h_r                   Buil                   Buil     t = pa              LLM for structured briefing
-    system_prompt = """You are Jarvis A    system_prompt = """You are Jarvis A  
-GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGe data (calendar, mail, messengers), create a structured briefing IN RUSSIAN:
+    """Generate structured meeting briefing from all available sources.
 
-1. СУТЬ ВСТРЕЧИ (what, who, why)
-2. КЛЮЧЕВЫЕ ТЕМЫ (from all sources)
-3. ИЗ ПЕРЕ�3. ИЗ ПЕРЕ�3. ИЗ ПЕРЕ�ts, 3. ИЗ ПЕРЕ�3. ИЗ ПЕРЕ�3. ИЗ ПЕРЕ�ts, 3. ИЗ ПЕРЕ�3. ИЗ ПЕРЕ�3. ИЗ ПЕРЕ�ts, 3. ИЗ ПЕРЕ�3. ИЗ ПЕРЕ�3. ИЗ ПЕРЕ�ts, 3. ИЗ ПЕРЕ�3. ИЗ ПЕРЕ�3. ИЗ ПЕРЕ�ts, 3. ИЗ ПЕРЕ�3. px3. ИЗ :
-3. ИЗ ПЕРЕ�3. ИЗ ПЕРЕ�3. ИЗ ПЕРЕ�ts c3. ИЗ ПЕРЕ�3. ИЗ ПЕРЕ�3. ИЗ ПЕРЕ�ts c3. ИЗ ПЕРЕ�3. ИЗ ПЕРЕ�3. ИЗ ПЕРЕ�ts c3. ИЗ ПЕРЕ�3. ИЗ ПЕРЕ�3. ИЗ П                {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": context},
+    Client usually sends prebuilt `context` (AIContextEngine result). If it's empty,
+    backend can still generate briefing based only on title/description.
+    """
+
+    base_info = {
+        "title": payload.meeting_title,
+        "date": payload.meeting_date,
+        "participants": payload.participants,
+        "description": payload.description,
+    }
+
+    context_parts = [
+        f"📋 ВСТРЕЧА: {base_info['title']}",
+        f"📅 Дата: {base_info['date'] or 'не указана'}",
+        f"👥 Участники: {', '.join(base_info['participants']) if base_info['participants'] else 'не указаны'}",
+        f"📝 Описание: {base_info['description'] or 'нет'}",
+        "",
+    ]
+    if payload.context:
+        context_parts.append("НАЙДЕННАЯ СВЯЗАННАЯ ИНФОРМАЦИЯ:")
+        context_parts.append(payload.context)
+
+    full_context = "\n".join(context_parts)
+
+    system_prompt = """Ты — Jarvis, AI-ассистент для подготовки к встречам.
+На входе у тебя информация о встрече и связанные данные из календаря, почты и мессенджеров.
+
+Сделай СТРУКТУРИРОВАННУЮ ВЫДЕРЖКУ на русском языке:
+
+1. СУТЬ ВСТРЕЧИ — о чём встреча, кто участвует, какова цель
+2. КЛЮЧЕВЫЕ ТЕМЫ — список основных тем и вопросов
+3. ИЗ ПЕРЕПИСОК — важные факты, договорённости, открытые вопросы
+4. РИСКИ И НЕЯСНОСТИ — что может пойти не так, что нужно уточнить
+5. РЕКОМЕНДАЦИИ — что подготовить до встречи, что спросить, на что обратить внимание
+
+Будь конкретен, используй пункты и подзаголовки. Отвечай по-русски."""
+
+    # 1) Cloud LLM
+    if _cloud_llm_enabled():
+        try:
+            text = await _cloud_chat(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": full_context},
                 ],
-                "stream": False,
-            })
-            if r.status_code == 200            if r.status_code == 200            if r.status_code == 200         
-                return {"briefing": text if text else "Failed to generate briefing."}
-    except Exception as e:
-        log.error(f"Meeting briefing LLM error: {e}")
-    
-    return {"briefing": f"LLM unavailable. Raw data:\n{json.dumps(search_results, ensure_ascii=False, default=str)[:3000]}"}
+                json_mode=False,
+                timeout=90.0,
+            )
+            if text:
+                return {"briefing": text}
+        except Exception as e:  # noqa: BLE001
+            log.error(f"Meeting briefing Cloud LLM error: {e}")
+
+    # 2) Fallback: Ollama chat
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            r = await client.post(
+                "http://localhost:11434/api/chat",
+                json={
+                    "model": "llama3.2",
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": full_context},
+                    ],
+                    "stream": False,
+                },
+            )
+            if r.status_code == 200:
+                text = r.json().get("message", {}).get("content", "").strip()
+                return {"briefing": text or "Не удалось сгенерировать брифинг."}
+    except Exception as e:  # noqa: BLE001
+        log.error(f"Meeting briefing Ollama error: {e}")
+
+    # 3) Fallback: raw context
+    return {"briefing": f"LLM unavailable. Raw data:\n{full_context[:3000]}"}
 
 
 # ---------------------------------------------------------------------------
 # AI DELEGATE TASK — Send task to user via messenger
 # ---------------------------------------------------------------------------
 
+
 class DelegateTaskPayload(BaseModel):
     task_title: str
     task_notes: str = ""
     assignee_handle: str
-    platform: str = "telegram"
+    platform: str = "telegram"  # "telegram" | "whatsapp" (future)
+
 
 @app.post("/ai/delegate-task")
 async def ai_delegate_task(payload: DelegateTaskPayload):
-    """Delegate a task to another user via Telegram or WhatsApp."""
-    message = f"📋 Вам назначена задача от Jarvis:\n\n*{payload.    message =
-                                                                                                         тьте «принято» для подтверждения."
-    
-    if payload.platform == "telegram" and _telegram.is_authorized:
-        try:
-            # Send via Telegram
-            sent = await _telegram.send_message(payload.assignee_handle, message)
-            return {"status": "sent", "platform": "telegram", "details": str(sent)}
-        except Exception as e:
-            return {"status": "error", "error": str(e)}
-    
-    return {"status": "not_configured", "message": f"{payload.platform} not connected"}
+    """Delegate a task to another user via messenger.
+
+    NOTE: Transport-level sending is not fully implemented yet. Endpoint returns
+    a preview payload so that client can show status and we can extend it later.
+    """
+
+    message_preview = (
+        f"📋 Вам назначена задача от Jarvis:\n\n"
+        f"*{payload.task_title}*\n"
+        f"{payload.task_notes}\n\n"
+        "Ответьте «принято» для подтверждения."
+    )
+
+    # For now we do not call Telegram/WhatsApp directly (not implemented in services)
+    return {
+        "status": "not_implemented",
+        "platform": payload.platform,
+        "assignee": payload.assignee_handle,
+        "message_preview": message_preview,
+    }

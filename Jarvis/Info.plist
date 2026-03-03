@@ -38,7 +38,7 @@
 		</dict>
 	</array>
 
-	<!-- Разрешить HTTP к бэкенду Jarvis -->
+	<!-- Разрешить HTTP к бэкенду Jarvis и Ollama -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSExceptionDomains</key>
@@ -53,8 +53,19 @@
 				<key>NSExceptionAllowsInsecureHTTPLoads</key>
 				<true/>
 			</dict>
+			<key>localhost</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
 		</dict>
 	</dict>
+
+	<!-- Local network for Ollama LLM -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Jarvis подключается к локальной языковой модели Ollama для AI-функций.</string>
 
 	<!-- App Store category -->
 	<key>LSApplicationCategoryType</key>

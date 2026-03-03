@@ -11,10 +11,10 @@ enum MealSource: String, Codable, Hashable, CaseIterable, Sendable {
     
     var displayName: String {
         switch self {
-        case .breakfast: return "Завтрак"
-        case .lunch: return "Обед"
-        case .dinner: return "Ужин"
-        case .snack: return "Перекус"
+        case .breakfast: return L10n.mealBreakfast
+        case .lunch: return L10n.mealLunch
+        case .dinner: return L10n.mealDinner
+        case .snack: return L10n.mealSnack
         }
     }
     
@@ -38,10 +38,10 @@ enum SleepQuality: String, Codable, Hashable, CaseIterable, Sendable {
     
     var displayName: String {
         switch self {
-        case .poor: return "Плохо"
-        case .fair: return "Нормально"
-        case .good: return "Хорошо"
-        case .excellent: return "Отлично"
+        case .poor: return L10n.sleepQualityBad
+        case .fair: return L10n.sleepQualityNormal
+        case .good: return L10n.sleepQualityGood
+        case .excellent: return L10n.sleepQualityExcellent
         }
     }
     

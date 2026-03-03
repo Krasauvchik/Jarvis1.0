@@ -46,11 +46,11 @@ enum ExportImport {
     static func importFromURL(_ url: URL, store: PlannerStore, merge: Bool) -> String? {
         guard let data = try? Data(contentsOf: url),
               let decoded = try? JSONDecoder().decode(JarvisExportData.self, from: data) else {
-            return "Не удалось прочитать файл"
+            return L10n.exportReadError
         }
         if merge {
             store.mergeImported(tasks: decoded.tasks, categories: decoded.categories, tags: decoded.tags)
-            return "Объединение выполнено"
+            return L10n.exportMergeComplete
         } else {
             store.replaceWithImported(
                 tasks: decoded.tasks,
@@ -58,7 +58,7 @@ enum ExportImport {
                 tags: decoded.tags,
                 dayBounds: decoded.dayBounds
             )
-            return "Импортировано: \(decoded.tasks.count) задач"
+            return "\(L10n.exportImported): \(decoded.tasks.count)"
         }
     }
 }

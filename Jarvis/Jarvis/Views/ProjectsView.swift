@@ -34,7 +34,7 @@ struct ProjectsView: View {
                                     projectCard(project)
                                 }
                             } label: {
-                                Text("Архив (\(archived.count))")
+                                Text("\(L10n.archive) (\(archived.count))")
                                     .font(.subheadline.weight(.medium))
                                     .foregroundColor(theme.textSecondary)
                             }
@@ -44,7 +44,7 @@ struct ProjectsView: View {
                 .padding()
             }
             .background(theme.background.ignoresSafeArea())
-            .navigationTitle("Проекты")
+            .navigationTitle(L10n.projectsTitle)
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: { showAddProject = true }) {
@@ -70,11 +70,11 @@ struct ProjectsView: View {
                 .font(.system(size: 48))
                 .foregroundColor(theme.textTertiary)
             
-            Text("Нет проектов")
+            Text(L10n.noProjects)
                 .font(.title3.weight(.semibold))
                 .foregroundColor(theme.textPrimary)
             
-            Text("Группируйте задачи по проектам\nдля лучшей организации")
+            Text(L10n.noProjectsDesc)
                 .font(.subheadline)
                 .foregroundColor(theme.textSecondary)
                 .multilineTextAlignment(.center)
@@ -82,7 +82,7 @@ struct ProjectsView: View {
             Button(action: { showAddProject = true }) {
                 HStack(spacing: 8) {
                     Image(systemName: "plus")
-                    Text("Создать проект")
+                    Text(L10n.createProject)
                 }
                 .foregroundColor(.white)
                 .padding(.horizontal, 24)
@@ -184,7 +184,7 @@ struct ProjectsView: View {
                     
                     let remaining = store.tasksForProject(project.id).count - 3
                     if remaining > 0 {
-                        Text("ещё \(remaining)")
+                        Text("\(L10n.moreItems) \(remaining)")
                             .font(.system(size: 11))
                             .foregroundColor(theme.textTertiary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -203,7 +203,7 @@ struct ProjectsView: View {
             Button {
                 editingProject = project
             } label: {
-                Label("Редактировать", systemImage: "pencil")
+                Label(L10n.edit, systemImage: "pencil")
             }
             
             Button {
@@ -212,7 +212,7 @@ struct ProjectsView: View {
                 store.updateProject(updated)
             } label: {
                 Label(
-                    project.isArchived ? "Разархивировать" : "Архивировать",
+                    project.isArchived ? L10n.unarchive : L10n.archive,
                     systemImage: project.isArchived ? "archivebox" : "archivebox.fill"
                 )
             }
@@ -222,7 +222,7 @@ struct ProjectsView: View {
             Button(role: .destructive) {
                 store.removeProject(project)
             } label: {
-                Label("Удалить", systemImage: "trash")
+                Label(L10n.delete, systemImage: "trash")
             }
         }
     }
@@ -261,15 +261,15 @@ struct ProjectEditorSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Название") {
-                    TextField("Название проекта", text: $name)
+                Section(L10n.titleField) {
+                    TextField(L10n.projectNamePlaceholder, text: $name)
                 }
                 
-                Section("Описание") {
-                    TextField("Описание (опционально)", text: $description)
+                Section(L10n.descriptionField) {
+                    TextField(L10n.descriptionPlaceholder, text: $description)
                 }
                 
-                Section("Цвет") {
+                Section(L10n.colorField) {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 10) {
                         ForEach(0..<JarvisTheme.taskColors.count, id: \.self) { index in
                             Circle()
@@ -287,7 +287,7 @@ struct ProjectEditorSheet: View {
                     }
                 }
                 
-                Section("Иконка") {
+                Section(L10n.iconField) {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 10) {
                         ForEach(projectIcons, id: \.self) { iconName in
                             Image(systemName: iconName)
@@ -303,16 +303,16 @@ struct ProjectEditorSheet: View {
                     }
                 }
             }
-            .navigationTitle(project == nil ? "Новый проект" : "Редактировать")
+            .navigationTitle(project == nil ? L10n.newProject : L10n.edit)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { dismiss() }
+                    Button(L10n.cancel) { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Сохранить") {
+                    Button(L10n.save) {
                         saveProject()
                         dismiss()
                     }
@@ -359,7 +359,7 @@ struct SubTaskListView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Подзадачи")
+                Text(L10n.subtasks)
                     .font(.subheadline.weight(.semibold))
                     .foregroundColor(theme.textPrimary)
                 
@@ -410,7 +410,7 @@ struct SubTaskListView: View {
                     .font(.system(size: 16))
                     .foregroundColor(JarvisTheme.accent)
                 
-                TextField("Добавить подзадачу", text: $newSubTaskTitle)
+                TextField(L10n.addSubtask, text: $newSubTaskTitle)
                     .font(.system(size: 14))
                     .textFieldStyle(.plain)
                     .onSubmit {

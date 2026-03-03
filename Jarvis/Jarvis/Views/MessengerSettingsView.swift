@@ -19,13 +19,13 @@ struct MessengerSettingsView: View {
                 .padding()
             }
             .background(theme.background.ignoresSafeArea())
-            .navigationTitle("Мессенджеры")
+            .navigationTitle(L10n.messengersTitle)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Закрыть") { dismiss() }
+                    Button(L10n.close) { dismiss() }
                 }
             }
         }
@@ -88,11 +88,11 @@ struct TelegramSetupSection: View {
     
     private var telegramCredentialsForm: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Для доступа к вашим чатам нужны API ключи от Telegram.")
+            Text(L10n.telegramAPIDesc)
                 .font(.caption)
                 .foregroundColor(theme.textSecondary)
             
-            Link("Получить api_id и api_hash →", destination: URL(string: "https://my.telegram.org/apps")!)
+            Link(L10n.telegramGetKeys, destination: URL(string: "https://my.telegram.org/apps")!)
                 .font(.caption.bold())
             
             TextField("API ID", text: $vm.apiId)
@@ -104,7 +104,7 @@ struct TelegramSetupSection: View {
             TextField("API Hash", text: $vm.apiHash)
                 .textFieldStyle(.roundedBorder)
             
-            TextField("Номер телефона (+7...)", text: $vm.phone)
+            TextField(L10n.phoneNumber, text: $vm.phone)
                 .textFieldStyle(.roundedBorder)
             #if os(iOS)
                 .keyboardType(.phonePad)
@@ -113,7 +113,7 @@ struct TelegramSetupSection: View {
             Button(action: { Task { await vm.configure() } }) {
                 HStack {
                     if vm.isLoading { ProgressView().scaleEffect(0.8) }
-                    Text("Подключить")
+                    Text(L10n.connect)
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -125,14 +125,14 @@ struct TelegramSetupSection: View {
     
     private var telegramAuthSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("API ключи сохранены. Нажмите для авторизации.")
+            Text(L10n.telegramAPIKeysSaved)
                 .font(.caption)
                 .foregroundColor(theme.textSecondary)
             
             Button(action: { Task { await vm.startAuth() } }) {
                 HStack {
                     if vm.isLoading { ProgressView().scaleEffect(0.8) }
-                    Text("Отправить код")
+                    Text(L10n.sendCode)
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -144,11 +144,11 @@ struct TelegramSetupSection: View {
     
     private var telegramCodeEntry: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Код отправлен в Telegram / SMS. Введите его ниже.")
+            Text(L10n.codeSentDesc)
                 .font(.caption)
                 .foregroundColor(theme.textSecondary)
             
-            TextField("Код подтверждения", text: $vm.authCode)
+            TextField(L10n.confirmationCode, text: $vm.authCode)
                 .textFieldStyle(.roundedBorder)
             #if os(iOS)
                 .keyboardType(.numberPad)
@@ -157,7 +157,7 @@ struct TelegramSetupSection: View {
             Button(action: { Task { await vm.completeAuth() } }) {
                 HStack {
                     if vm.isLoading { ProgressView().scaleEffect(0.8) }
-                    Text("Подтвердить")
+                    Text(L10n.confirm)
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -169,17 +169,17 @@ struct TelegramSetupSection: View {
     
     private var telegram2FAEntry: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Аккаунт защищён двухфакторной аутентификацией. Введите пароль.")
+            Text(L10n.telegram2FAHint)
                 .font(.caption)
                 .foregroundColor(theme.textSecondary)
             
-            SecureField("Пароль 2FA", text: $vm.twoFAPassword)
+            SecureField(L10n.twoFAPassword, text: $vm.twoFAPassword)
                 .textFieldStyle(.roundedBorder)
             
             Button(action: { Task { await vm.completeAuth() } }) {
                 HStack {
                     if vm.isLoading { ProgressView().scaleEffect(0.8) }
-                    Text("Подтвердить")
+                    Text(L10n.confirm)
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -194,23 +194,23 @@ struct TelegramSetupSection: View {
             HStack {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundColor(.green)
-                Text("Подключён")
+                Text(L10n.connected)
                     .font(.subheadline.bold())
                     .foregroundColor(theme.textPrimary)
             }
             
-            Text("\(vm.selectedChatsCount) чатов отслеживается")
+            Text("\(vm.selectedChatsCount) \(L10n.chatsMonitored)")
                 .font(.caption)
                 .foregroundColor(theme.textSecondary)
             
             HStack(spacing: 12) {
-                Button("Выбрать чаты") {
+                Button(L10n.selectChats) {
                     Task { await vm.loadChats() }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color(red: 0.07, green: 0.72, blue: 0.34))
                 
-                Button("Отключить", role: .destructive) {
+                Button(L10n.disconnect, role: .destructive) {
                     Task { await vm.disconnect() }
                 }
                 .buttonStyle(.bordered)
@@ -221,18 +221,18 @@ struct TelegramSetupSection: View {
     private var telegramChatSelection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Выберите чаты для мониторинга")
+                Text(L10n.selectChatsForMonitoring)
                     .font(.subheadline.bold())
                     .foregroundColor(theme.textPrimary)
                 Spacer()
-                Button("Готово") {
+                Button(L10n.done) {
                     Task { await vm.saveSelectedChats() }
                 }
                 .font(.subheadline.bold())
             }
             
             if vm.isLoading {
-                ProgressView("Загрузка чатов...")
+                ProgressView(L10n.loadingChats)
                     .frame(maxWidth: .infinity)
             } else {
                 ForEach(vm.availableChats, id: \.id) { chat in
@@ -334,14 +334,14 @@ struct WhatsAppSetupSection: View {
     
     private var whatsappCredentialsForm: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Используется Green API (green-api.com) для доступа к WhatsApp.")
+            Text(L10n.whatsappGreenAPIDesc)
                 .font(.caption)
                 .foregroundColor(theme.textSecondary)
             
-            Link("Зарегистрироваться в Green API →", destination: URL(string: "https://green-api.com")!)
+            Link(L10n.whatsappRegisterGreenAPI, destination: URL(string: "https://green-api.com")!)
                 .font(.caption.bold())
             
-            Text("После регистрации отсканируйте QR-код в личном кабинете Green API, затем введите данные ниже.")
+            Text(L10n.whatsappScanQRHint)
                 .font(.caption)
                 .foregroundColor(theme.textSecondary)
             
@@ -354,7 +354,7 @@ struct WhatsAppSetupSection: View {
             Button(action: { Task { await vm.configure() } }) {
                 HStack {
                     if vm.isLoading { ProgressView().scaleEffect(0.8) }
-                    Text("Подключить")
+                    Text(L10n.connect)
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -367,13 +367,13 @@ struct WhatsAppSetupSection: View {
     private var whatsappConnecting: some View {
         VStack(alignment: .leading, spacing: 12) {
             if vm.isLoading {
-                ProgressView("Проверяю подключение...")
+                ProgressView(L10n.checkingConnection)
             } else {
-                Text("Данные сохранены. Проверяю авторизацию WhatsApp...")
+                Text(L10n.whatsappCheckingAuth)
                     .font(.caption)
                     .foregroundColor(theme.textSecondary)
                 
-                Button("Проверить статус") {
+                Button(L10n.checkStatus) {
                     Task { await vm.checkStatus() }
                 }
                 .buttonStyle(.borderedProminent)
@@ -387,23 +387,23 @@ struct WhatsAppSetupSection: View {
             HStack {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundColor(.green)
-                Text("Подключён")
+                Text(L10n.connected)
                     .font(.subheadline.bold())
                     .foregroundColor(theme.textPrimary)
             }
             
-            Text("\(vm.selectedChatsCount) чатов отслеживается")
+            Text("\(vm.selectedChatsCount) \(L10n.chatsMonitored)")
                 .font(.caption)
                 .foregroundColor(theme.textSecondary)
             
             HStack(spacing: 12) {
-                Button("Выбрать чаты") {
+                Button(L10n.selectChats) {
                     Task { await vm.loadChats() }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color(red: 0.14, green: 0.80, blue: 0.44))
                 
-                Button("Отключить", role: .destructive) {
+                Button(L10n.disconnect, role: .destructive) {
                     Task { await vm.disconnect() }
                 }
                 .buttonStyle(.bordered)
@@ -414,21 +414,21 @@ struct WhatsAppSetupSection: View {
     private var whatsappChatSelection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Выберите чаты для мониторинга")
+                Text(L10n.selectChatsForMonitoring)
                     .font(.subheadline.bold())
                     .foregroundColor(theme.textPrimary)
                 Spacer()
-                Button("Готово") {
+                Button(L10n.done) {
                     Task { await vm.saveSelectedChats() }
                 }
                 .font(.subheadline.bold())
             }
             
             if vm.isLoading {
-                ProgressView("Загрузка чатов...")
+                ProgressView(L10n.loadingChats)
                     .frame(maxWidth: .infinity)
             } else if vm.availableChats.isEmpty {
-                Text("Нет доступных чатов. Убедитесь, что QR-код отсканирован в Green API.")
+                Text(L10n.whatsappNoChats)
                     .font(.caption)
                     .foregroundColor(theme.textSecondary)
             } else {
@@ -489,10 +489,10 @@ enum ConnectionState {
     
     var label: String {
         switch self {
-        case .disconnected: return "Не подключён"
-        case .connecting: return "Подключение..."
-        case .connected: return "Подключён"
-        case .error: return "Ошибка"
+        case .disconnected: return L10n.statusDisconnected
+        case .connecting: return L10n.statusConnecting
+        case .connected: return L10n.statusConnected
+        case .error: return L10n.statusError
         }
     }
     
@@ -515,10 +515,10 @@ struct MessengerChat: Identifiable {
     
     var typeLabel: String {
         switch type {
-        case "private": return "Личный чат"
-        case "group": return "Группа"
-        case "supergroup": return "Супергруппа"
-        case "channel": return "Канал"
+        case "private": return L10n.chatTypePrivate
+        case "group": return L10n.chatTypeGroup
+        case "supergroup": return L10n.chatTypeSupergroup
+        case "channel": return L10n.chatTypeChannel
         default: return type
         }
     }
@@ -572,7 +572,7 @@ final class TelegramSetupVM: ObservableObject {
     
     func configure() async {
         guard let id = Int(apiId) else {
-            error = "API ID должен быть числом"
+            error = L10n.errorApiIdNumber
             return
         }
         isLoading = true
@@ -581,7 +581,7 @@ final class TelegramSetupVM: ObservableObject {
         
         let body: [String: Any] = ["api_id": id, "api_hash": apiHash, "phone": phone]
         guard let _ = await apiPost(Config.Endpoints.telegramConfigure, body: body) else {
-            error = "Не удалось сохранить настройки. Проверьте, что бэкенд запущен."
+            error = L10n.errorSaveSettingsBackend
             return
         }
         
@@ -596,7 +596,7 @@ final class TelegramSetupVM: ObservableObject {
         defer { isLoading = false }
         
         guard let data = await apiPost(Config.Endpoints.telegramAuthStart, body: [:]) else {
-            error = "Ошибка подключения к бэкенду"
+            error = L10n.errorBackendConnection
             connectionState = .error
             return
         }
@@ -611,7 +611,7 @@ final class TelegramSetupVM: ObservableObject {
             setupPhase = .awaitingCode
             connectionState = .connecting
         default:
-            error = data["error"] as? String ?? "Неизвестная ошибка"
+            error = data["error"] as? String ?? L10n.errorUnknown
             connectionState = .error
         }
     }
@@ -630,7 +630,7 @@ final class TelegramSetupVM: ObservableObject {
         }
         
         guard let data = await apiPost(Config.Endpoints.telegramAuthComplete, body: body) else {
-            error = "Ошибка подключения"
+            error = L10n.errorConnection
             return
         }
         
@@ -642,7 +642,7 @@ final class TelegramSetupVM: ObservableObject {
         case "need_2fa":
             setupPhase = .needs2FA
         default:
-            error = data["error"] as? String ?? "Ошибка авторизации"
+            error = data["error"] as? String ?? L10n.errorAuth
             connectionState = .error
         }
     }
@@ -655,7 +655,7 @@ final class TelegramSetupVM: ObservableObject {
         
         guard let data = await apiGet(Config.Endpoints.telegramChats),
               let chatsArray = data["chats"] as? [[String: Any]] else {
-            error = "Не удалось загрузить чаты"
+            error = L10n.errorLoadChats
             return
         }
         
@@ -744,7 +744,7 @@ final class WhatsAppSetupVM: ObservableObject {
         
         let body: [String: Any] = ["instance_id": instanceId, "api_token": apiToken]
         guard let _ = await apiPost(Config.Endpoints.whatsappConfigure, body: body) else {
-            error = "Не удалось сохранить настройки"
+            error = L10n.errorSaveSettings
             return
         }
         
@@ -760,7 +760,7 @@ final class WhatsAppSetupVM: ObservableObject {
         
         guard let data = await apiGet(Config.Endpoints.whatsappChats),
               let chatsArray = data["chats"] as? [[String: Any]] else {
-            error = "Не удалось загрузить чаты. Проверьте, что QR отсканирован."
+            error = L10n.errorLoadChatsQR
             return
         }
         
