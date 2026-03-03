@@ -103,17 +103,171 @@ final class AIManager: ObservableObject {
         }
     }
     
+    // MARK: - Smart Intent Detection
+    
+    enum UserIntent {
+        case standard                          // обычная команда → /ai/command
+        case meetingBriefing(String)            // "подготовь выдержку по встрече X"
+        case contextSearch(String)             // "найди всё по теме X" / "что по соевому соусу?"
+        case coaching(String, AILifeCoach.LifeCategory) // "качать плечи" → фитнес-план
+        case delegateTask(String, String)       // "поставь задачу {title} пользователю {user}"
+    }
+    
+    /// Определяет намерение пользователя по тексту сообщения.
+    func detectIntent(_ message: String) -> UserIntent {
+        let lower = message.lowercased()
+        
+        // 1. Meeting briefing
+        let briefingPatterns = ["подготовь выдержку", "подготовь брифинг", "что по встрече",
+                               "инфо по встрече", "подготовься к встрече", "briefing for",
+                               "prepare for meeting", "выдержку по встрече"]
+        if briefingPatterns.contains(where: { lower.contains($0) }) {
+            let topic = extractTopic(from: lower, triggers: briefingPatterns)
+            return .meetingBriefing(topic)
+        }
+        
+        // 2. Context search
+        let searchPatterns = ["найди всё по", "найди все по", "что по теме", "поищи информацию",
+                             "поиск по", "собери инфо по", "search for", "find everything about"]
+        if searchPatterns.contains(where: { lower.contains($0) }) {
+            let topic = extractTopic(from: lower, triggers: searchPatterns)
+            return .contextSearch(topic)
+        }
+        
+        // 3. Task delegation
+        let delegatePatterns = ["поставь задачу .+ пользователю", "назначь .+ на ",
+                               "делегируй .+ ", "assign .+ to "]
+        for pattern in delegatePatterns {
+            if let match = lower.range(of: pattern, options: .regularExpression) {
+                let afterMatch = String(lower[match.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                let beforeUser = String(lower[lower.startIndex..<match.lowerBound])
+                return .delegateTask(beforeUser.isEmpty ? afterMatch : beforeUser, afterMatch)
+            }
+        }
+        
+        // 4. Coaching (fitness, nutrition, learning etc.)
+        let coach = AILifeCoach.shared
+        let category = coach.classifyCategory(message)
+        let coachingTriggers = ["план тренировк", "программа тренировк", "план занят",
+                               "как качать", "упражнения для", "план питания",
+                               "меню на", "план медитац", "workout plan", "exercise plan",
+                               "добавь в личные", "в личную"]
+        let isCoachingByTrigger = coachingTriggers.contains(where: { lower.contains($0) })
+        let isCoachingByCategory = category != AILifeCoach.LifeCategory.other && (lower.contains("задач") || lower.contains("поставь"))
+        
+        if isCoachingByTrigger || isCoachingByCategory {
+            return .coaching(message, category)
+        }
+        
+        // 5. Default
+        return .standard
+    }
+    
+    private func extractTopic(from text: String, triggers: [String]) -> String {
+        var result = text
+        for trigger in triggers {
+            if let range = result.range(of: trigger) {
+                result = String(result[range.upperBound...])
+                break
+            }
+        }
+        return result.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+    }
+    
     // MARK: - Unified AI Command (main entry point)
     
-    /// Отправляет команду на естественном языке. AI анализирует, выполняет действия и возвращает ответ.
+    /// Отправляет команду на естественном языке. AI анализирует намерение, маршрутизирует
+    /// к нужному сервису (MeetingBriefing, ContextSearch, LifeCoach или стандартный /ai/command).
     func sendCommand(_ message: String, tasks: [PlannerTask] = [], date: Date = Date()) async -> AICommandResponse {
         isProcessing = true
         defer { isProcessing = false }
         
-        // Build context
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        // Smart routing based on intent
+        let intent = detectIntent(message)
         
+        switch intent {
+        case .meetingBriefing(let topic):
+            return await handleMeetingBriefing(topic: topic, tasks: tasks)
+            
+        case .contextSearch(let query):
+            return await handleContextSearch(query: query, tasks: tasks)
+            
+        case .coaching(let text, let category):
+            return await handleCoaching(text: text, category: category, tasks: tasks)
+            
+        case .delegateTask(let taskTitle, let assignee):
+            return await handleDelegation(taskTitle: taskTitle, assignee: assignee)
+            
+        case .standard:
+            return await handleStandardCommand(message: message, tasks: tasks, date: date)
+        }
+    }
+    
+    // MARK: - Intent Handlers
+    
+    private func handleMeetingBriefing(topic: String, tasks: [PlannerTask]) async -> AICommandResponse {
+        let briefing = MeetingBriefingService.shared
+        let info = MeetingBriefingService.MeetingInfo(title: topic, date: Date())
+        
+        if let result = await briefing.generateBriefing(for: info, tasks: tasks) {
+            return AICommandResponse(
+                response: result.structuredSummary,
+                actions: [AIAction(type: "meeting_briefing", params: [
+                    "title": result.meetingTitle,
+                    "related_emails": String(result.relatedEmails),
+                    "related_messages": String(result.relatedMessages),
+                ])]
+            )
+        }
+        return AICommandResponse(response: "Не удалось подготовить выдержку по \"\(topic)\". Проверьте подключение к AI.")
+    }
+    
+    private func handleContextSearch(query: String, tasks: [PlannerTask]) async -> AICommandResponse {
+        let engine = AIContextEngine.shared
+        let result = await engine.searchAllSources(query: query, lookbackDays: 30, localTasks: tasks)
+        let formatted = engine.formatSearchResultForLLM(result)
+        
+        return AICommandResponse(
+            response: "🔍 Поиск по \"\(query)\" — найдено \(result.totalMatches) результатов:\n\n\(formatted)",
+            actions: [AIAction(type: "context_search", params: [
+                "query": query,
+                "total_matches": String(result.totalMatches),
+            ])]
+        )
+    }
+    
+    private func handleCoaching(text: String, category: AILifeCoach.LifeCategory, tasks: [PlannerTask]) async -> AICommandResponse {
+        let coach = AILifeCoach.shared
+        let result = await coach.getCoachingAdvice(
+            taskDescription: text,
+            category: category
+        )
+        
+        var responseText = "\(result.category.emoji) \(result.category.displayName)\n\n\(result.content)"
+        if let progress = result.progressAnalysis {
+            responseText += "\n\n📊 Анализ прогресса:\n\(progress)"
+        }
+        
+        return AICommandResponse(
+            response: responseText,
+            actions: [AIAction(type: "coaching", params: [
+                "category": result.category.rawValue,
+            ])]
+        )
+    }
+    
+    private func handleDelegation(taskTitle: String, assignee: String) async -> AICommandResponse {
+        // TODO: реальная отправка через Telegram/WhatsApp API
+        return AICommandResponse(
+            response: "📤 Задача «\(taskTitle)» назначена пользователю \(assignee).\n(Интеграция с мессенджерами для делегирования задач будет в следующем обновлении)",
+            actions: [AIAction(type: "delegate_task", params: [
+                "title": taskTitle,
+                "assignee": assignee,
+            ])]
+        )
+    }
+    
+    private func handleStandardCommand(message: String, tasks: [PlannerTask], date: Date) async -> AICommandResponse {
         let taskDicts: [[String: Any]] = tasks.prefix(30).map { t in
             [
                 "title": t.title,
@@ -191,10 +345,21 @@ final class AIManager: ObservableObject {
         let tasksList = tasks.prefix(20).map { "- \($0.title)\($0.isCompleted ? " ✓" : "")" }.joined(separator: "\n")
         
         let systemPrompt = """
-        Ты — Jarvis, AI-ассистент планировщик. Задачи пользователя:
+        Ты — Jarvis, AI-ассистент планировщик. Пользователь управляет приложением голосом.
+        Задачи пользователя:
         \(tasksList.isEmpty ? "Нет задач" : tasksList)
         Дата: \(Date().formatted(date: .abbreviated, time: .shortened))
-        Отвечай кратко и по-русски. Помогай с планированием, задачами, советами.
+        
+        Если пользователь просит создать/выполнить/удалить/перенести задачу — верни JSON:
+        {"response": "текст", "actions": [{"type": "тип", "params": {}}]}
+        
+        Типы: create_task, complete_task, delete_task, reschedule_task, move_task, advice, none
+        Для create_task params: title, date (ISO-8601), priority (low/medium/high), folder (inbox/today)
+        Для complete_task/delete_task: title (приблизительное название)
+        Для move_task: title, folder (inbox/today/completed/scheduled/future)
+        Для reschedule_task: title, new_date (ISO-8601)
+        
+        Если это простой вопрос — отвечай текстом по-русски, кратко и полезно.
         """
         
         struct OllamaChatReq: Encodable {
@@ -222,6 +387,11 @@ final class AIManager: ObservableObject {
             if let decoded = try? JSONDecoder().decode(OllamaChatResp.self, from: data),
                let text = decoded.message?.content.trimmingCharacters(in: .whitespacesAndNewlines),
                !text.isEmpty {
+                // Try to parse as AICommandResponse JSON (for action execution)
+                if let jsonData = text.data(using: .utf8),
+                   let cmdResponse = try? JSONDecoder().decode(AICommandResponse.self, from: jsonData) {
+                    return cmdResponse
+                }
                 return AICommandResponse(response: text)
             }
         } catch {
@@ -417,7 +587,7 @@ final class AIManager: ObservableObject {
     func checkBackendStatus() async -> (running: Bool, ollamaConnected: Bool) {
         struct HealthResp: Decodable { let status: String; let ollama: Bool? }
         do {
-            let url = URL(string: "http://localhost:8000/health")!
+            let url = URL(string: "https://localhost:8000/health")!
             let (data, response) = try await URLSession.shared.data(from: url)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { return (false, false) }
             let health = try? JSONDecoder().decode(HealthResp.self, from: data)

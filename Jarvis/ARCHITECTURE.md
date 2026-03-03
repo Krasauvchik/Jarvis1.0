@@ -1,6 +1,6 @@
 # Jarvis Planner — Architecture Documentation
 
-> **Version:** 2.0 · **Updated:** June 2025 · **Platform:** iOS 16+ / macOS 13+ / watchOS 9+
+> **Version:** 2.1 · **Updated:** March 2026 · **Platform:** iOS 16+ / macOS 13+ / watchOS 9+
 
 ## Overview
 
@@ -51,13 +51,18 @@ Jarvis/
 ├── JarvisTheme.swift            # Theme system (light/dark adaptive)
 ├── AnimationExtensions.swift    # Animation modifiers & transitions
 ├── Config.swift                 # Configuration constants
-├── AIManager.swift              # AI orchestration (Ollama, Gemini, heuristic)
+├── AIManager.swift              # AI orchestration + intent routing (Ollama, Gemini, heuristic)
 ├── AIModels.swift               # AI model definitions + HeuristicAdapter
+├── AIContextEngine.swift        # Cross-source semantic search (tasks, calendar, mail)
+├── AILifeCoach.swift            # Personal AI coach (fitness, nutrition, learning, meditation)
+├── MeetingBriefingService.swift # AI meeting briefing generator
+├── VoiceCommandExecutor.swift   # Executes AIAction → PlannerStore (voice control)
+├── LLMDigestService.swift       # AI digest aggregator (calendar+mail+messengers)
 ├── CloudSync.swift              # iCloud KV store sync
 ├── CalendarSyncService.swift    # EKEventKit integration
 ├── NotificationManager.swift    # Local notifications (15 min before task)
 ├── NetworkMonitor.swift         # NWPathMonitor connectivity
-├── SpeechRecognizer.swift       # SFSpeechRecognizer wrapper
+├── SpeechRecognizer.swift       # SFSpeechRecognizer wrapper (iOS + macOS)
 ├── Integrations.swift           # Auth, Calendar, Mail, Nutrition services
 ├── ExportImport.swift           # JSON export/import
 ├── WellnessModels.swift         # Wellness data models + WellnessStore
@@ -75,13 +80,16 @@ Jarvis/
 │   └── Protocols.swift          # Service protocols
 ├── Views/
 │   ├── AIChatView.swift         # AI chat dialog
+│   ├── AICommandBarOverlay.swift # Inline AI command bar + voice (bottom bar)
 │   ├── CalendarView.swift       # Google Calendar events (iOS)
 │   ├── ChartAnalyticsView.swift # Swift Charts analytics (Phase 3)
 │   ├── MailView.swift           # Gmail messages (iOS)
-│   ├── MessengerIntegrationView.swift # WhatsApp/Telegram sharing
+│   ├── MessengerSettingsView.swift   # Telegram/WhatsApp setup, auth, chat selection
+│   ├── OnboardingView.swift     # 6-page onboarding + OnboardingManager
+│   ├── ProfileSleepViews.swift  # Profile & sleep calculator sheets
 │   ├── ProjectsView.swift       # Projects + sub-tasks (Phase 3)
 │   ├── SettingsViews.swift      # Settings sheet (iOS/Mac)
-│   ├── SidebarView.swift        # Sidebar navigation (iPad/Mac)
+│   ├── SidebarView.swift        # Sidebar navigation + AppMode (iPad/Mac)
 │   ├── TaskSheets.swift         # Task creation/edit sheets
 │   └── TimelineView.swift       # Timeline panel (iPad/Mac)
 └── JarvisWidgetExtension/
@@ -191,10 +199,22 @@ Jarvis/
       ├── .ollama ─────▶ Ollama HTTP API (localhost:11434)
       ├── .gemini ─────▶ Backend /llm/plan
       └── .cloudGPT ───▶ Backend /llm/plan
+                   │
+                   ▼ (intent routing)
+      ┌────────────┼─────────────┬──────────────┬───────────────┐
+      │            │             │              │               │
+   context     briefing       coaching     delegation      general
+      ▼            ▼             ▼              ▼               ▼
+ AIContext    MeetingBrief   AILifeCoach   /ai/delegate    sendCommand
+  Engine       Service                      -task
 ```
 
 - **HeuristicAdapter:** Extracts tasks from natural language (Russian + English), pattern matching for time/dates
 - **Ollama:** Local LLM via HTTP (`/api/generate` and `/api/chat`), configurable model and base URL
+- **AIContextEngine:** Cross-source semantic search across tasks, calendar, mail
+- **MeetingBriefingService:** Generates briefings for upcoming meetings (participants, agenda, context)
+- **AILifeCoach:** Personal coaching (fitness, nutrition, learning, meditation categories)
+- **Intent Routing:** `AIManager.detectIntent()` classifies user messages into 5 intents: contextSearch, meetingBriefing, coaching, delegation, general
 - **Chat:** Currently Ollama-only for full dialog mode
 
 ---
@@ -241,18 +261,135 @@ JarvisTheme.textPrimary  // reads system color scheme
 
 | Service | File | Purpose |
 |---------|------|---------|
-| `PlannerStore` | PlannerModels.swift | Task CRUD, query, persistence |
+| `PlannerStore` | PlannerModels.swift | Task CRUD, query, persistence (cached) |
 | `CloudSync` | CloudSync.swift | iCloud KV sync |
-| `AIManager` | AIManager.swift | AI model orchestration |
+| `AIManager` | AIManager.swift | AI model orchestration + intent routing |
+| `AIContextEngine` | AIContextEngine.swift | Cross-source semantic search |
+| `MeetingBriefingService` | MeetingBriefingService.swift | Meeting briefing generation |
+| `AILifeCoach` | AILifeCoach.swift | Personal AI coaching (fitness, nutrition, etc.) |
+| `VoiceCommandExecutor` | VoiceCommandExecutor.swift | Executes AI actions in PlannerStore |
+| `LLMDigestService` | LLMDigestService.swift | AI digest from calendar+mail+messengers |
 | `CalendarSyncService` | CalendarSyncService.swift | EKEventKit sync |
 | `NotificationManager` | NotificationManager.swift | Local notifications (15 min early) |
 | `NetworkMonitor` | NetworkMonitor.swift | Connectivity monitoring |
-| `SpeechRecognizer` | SpeechRecognizer.swift | Speech-to-text |
+| `SpeechRecognizer` | SpeechRecognizer.swift | Speech-to-text (iOS + macOS) |
 | `AuthService` | Integrations.swift | Backend auth check |
 | `CalendarService` | Integrations.swift | Backend calendar API |
 | `MailService` | Integrations.swift | Backend mail API |
 | `NutritionService` | Integrations.swift | Meal analysis API |
 | `ExportImport` | ExportImport.swift | JSON export/import |
+
+---
+
+## Voice Control & LLM Integration
+
+### Architecture
+
+```
+User Voice ──▶ SpeechRecognizer (SFSpeech) ──▶ AIManager.sendCommand()
+                                                       │
+                   ┌───────────────────────────────────┤
+                   ▼                                   ▼
+            Backend /ai/command              Direct Ollama (fallback)
+            (Ollama + JSON format)
+                   │
+                   ▼
+          AICommandResponse { response, actions[], executed[] }
+                   │
+                   ▼
+          VoiceCommandExecutor.execute(actions)
+                   │
+       ┌───────────┼───────────┬──────────────┬────────────┐
+       ▼           ▼           ▼              ▼            ▼
+  create_task  complete_task  move_task  reschedule_task  delete_task
+  (PlannerStore.add)  (.toggleCompletion)  (.moveTask)  (.update)  (.delete)
+```
+
+### Supported Voice Commands
+
+| Intent | Example | AI Action |
+|--------|---------|-----------|
+| Create task | "Создай задачу купить молоко завтра в 10" | `create_task` |
+| Complete task | "Отметь задачу молоко как выполненную" | `complete_task` |
+| Delete task | "Удали задачу уборка" | `delete_task` |
+| Reschedule | "Перенеси встречу на послезавтра" | `reschedule_task` |
+| Move to folder | "Перенеси задачу во входящие" | `move_task` |
+| Show calendar | "Покажи мой календарь" | `show_calendar` |
+| Show mail | "Есть непрочитанные?" | `show_mail` |
+| Send email | "Отправь письмо..." | `send_email` |
+| AI digest | "Покажи сводку/выдержку" | Triggers `LLMDigestService` |
+| General chat | "Какие дела на сегодня?" | `advice` / free text |
+
+### LLM Digest Pipeline
+
+```
+LLMDigestService.generateDigest()
+    ├── CalendarService.fetchEventsAsDTO()    (Google Calendar)
+    ├── MailService.fetchMessages()           (Gmail)
+    ├── Backend /integrations/telegram/digest (Telethon MTProto → selected chats → LLM)
+    └── Backend /integrations/whatsapp/digest (Green API → selected chats → LLM)
+           │
+           ▼
+    buildDigestContext() → structured text
+           │
+           ▼
+    Backend /ai/digest (Ollama) → AI summary
+
+### Messenger Integration Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│                 iOS/macOS App                    │
+│  MessengerSettingsView                          │
+│    ├── TelegramSetupSection (auth flow + chats) │
+│    └── WhatsAppSetupSection (credentials + QR)  │
+└──────────────────┬──────────────────────────────┘
+                   │ REST API
+┌──────────────────▼──────────────────────────────┐
+│              FastAPI Backend                      │
+│  /integrations/telegram/*                        │
+│    └── telegram_service.py (TelegramService)     │
+│         └── Telethon (MTProto user client)        │
+│              • Authenticates as user (phone+code) │
+│              • Reads ONLY selected chats           │
+│              • Session persisted on disk            │
+│  /integrations/whatsapp/*                          │
+│    └── whatsapp_service.py (WhatsAppService)       │
+│         └── Green API (REST bridge to WA Web)      │
+│              • User scans QR on green-api.com       │
+│              • Reads ONLY selected chats             │
+└──────────────────┬──────────────────────────────────┘
+                   │ LLM Summarization
+┌──────────────────▼──────────┐
+│  Ollama (llama3.2 local)    │
+│  Raw messages → AI digest    │
+└─────────────────────────────┘
+```
+
+**Telegram Setup Flow:**
+1. User gets `api_id` + `api_hash` from https://my.telegram.org/apps
+2. POST `/telegram/configure` → saves credentials
+3. POST `/telegram/auth/start` → sends SMS/Telegram code
+4. POST `/telegram/auth/complete` → verifies code (+ optional 2FA)
+5. GET `/telegram/chats` → lists all dialogs
+6. POST `/telegram/chats/select` → user picks which chats to monitor
+7. GET `/telegram/digest` → reads selected chats → LLM summary
+
+**WhatsApp Setup Flow:**
+1. User registers at https://green-api.com
+2. Scans QR code in Green API dashboard
+3. POST `/whatsapp/configure` → saves instance_id + api_token
+4. GET `/whatsapp/chats` → lists all chats
+5. POST `/whatsapp/chats/select` → user picks chats
+6. GET `/whatsapp/digest` → reads selected chats → LLM summary
+```
+
+### Task Search (Fuzzy)
+
+`VoiceCommandExecutor.findTask(byTitle:)` searches in 3 steps:
+1. Exact match (case-insensitive)
+2. Contains match (prioritizes non-completed tasks)
+3. Word intersection match (shared words > 2 chars)
 
 ---
 
@@ -279,8 +416,28 @@ JarvisTheme.textPrimary  // reads system color scheme
 | `/auth/google` | GET | Initiate Google OAuth |
 | `/calendar/events` | GET | Fetch Google Calendar events |
 | `/mail/messages` | GET | Fetch Gmail messages |
+| `/mail/send` | POST | Send Gmail message |
+| `/mail/reply` | POST | Reply to Gmail message |
 | `/analyze-meal` | POST | Nutrition analysis |
 | `/llm/plan` | POST | AI task advice |
+| `/llm/chat` | POST | LLM chat proxy (Ollama) |
+| `/ai/command` | POST | Unified AI command (voice/text → actions) |
+| `/ai/digest` | POST | AI digest aggregation (all sources → summary) |
+| `/integrations/telegram/status` | GET | Telegram connection status |
+| `/integrations/telegram/configure` | POST | Save Telegram API credentials |
+| `/integrations/telegram/auth/start` | POST | Send auth code to phone |
+| `/integrations/telegram/auth/complete` | POST | Verify code (+2FA) |
+| `/integrations/telegram/chats` | GET | List available chats |
+| `/integrations/telegram/chats/select` | POST | Select chats to monitor |
+| `/integrations/telegram/digest` | GET | LLM-summarized digest from selected chats |
+| `/integrations/telegram/disconnect` | POST | Logout & clear session |
+| `/integrations/whatsapp/status` | GET | WhatsApp connection status |
+| `/integrations/whatsapp/configure` | POST | Save Green API credentials |
+| `/integrations/whatsapp/qr` | GET | Get QR code (if needed) |
+| `/integrations/whatsapp/chats` | GET | List available chats |
+| `/integrations/whatsapp/chats/select` | POST | Select chats to monitor |
+| `/integrations/whatsapp/digest` | GET | LLM-summarized digest from selected chats |
+| `/integrations/whatsapp/disconnect` | POST | Disconnect & clear session |
 
 **Auth:** Google OAuth2 (credentials.json)  
 **Deploy:** Docker / systemd service
@@ -324,9 +481,9 @@ JarvisTheme.textPrimary  // reads system color scheme
 
 ### Analytics
 - ✅ Swift Charts dashboard (iOS 16+ / macOS 13+)
-- ✅ Completion trend (bar + line overlay, by period)
+- ✅ Completion trend (bar chart, by period)
 - ✅ Productivity by hour of day
-- ✅ Category distribution (donut chart)
+- ✅ Category distribution (horizontal bar chart)
 - ✅ Priority breakdown (bar chart)
 - ✅ Streak tracker (14-day dot grid)
 - ✅ AI advice section
@@ -354,6 +511,21 @@ JarvisTheme.textPrimary  // reads system color scheme
 - ✅ Instant switching
 - ✅ Persisted to UserDefaults
 
+### App Modes
+- ✅ Work / Personal mode switching
+- ✅ Filtered sidebar navigation per mode
+- ✅ Mode persisted via @AppStorage
+
+### Accessibility
+- ✅ VoiceOver labels on all key interactive elements
+- ✅ Dynamic Type support (capped at accessibility1 for complex layouts)
+- ✅ Accessibility hints on primary actions
+
+### macOS Integration
+- ✅ Keyboard shortcuts via Commands API
+- ✅ Native window management
+- ✅ Sidebar toggle (Ctrl+⌘S)
+
 ---
 
 ## Known Limitations
@@ -361,15 +533,15 @@ JarvisTheme.textPrimary  // reads system color scheme
 1. **iCloud KV Store 1MB limit** — all data serialized as JSON; will fail silently with ~200-300 tasks
 2. **No data migration** — storage key version bumps abandon old data
 3. **No conflict resolution** — last-write-wins on iCloud sync
-4. **HTTP backend** — no TLS; requires App Transport Security exception
-5. **Localization partial** — L10n infrastructure ready but most views still use hardcoded Russian strings
-6. **Calendar/Mail iOS-only** — unavailable on macOS/watchOS
+4. **Localization partial** — L10n infrastructure ready but most views still use hardcoded Russian strings
+5. **Calendar/Mail iOS-only** — unavailable on macOS/watchOS
+6. **Telegram/WhatsApp send** — delegation endpoint exists but actual messenger send not yet implemented
 
 ---
 
 ## Development Roadmap
 
-### Phase 1 — Stability & Quality (Current)
+### Phase 1 — Stability & Quality ✅
 - [x] Fix timeline task positioning
 - [x] Add drag-to-reschedule (15-min snapping)
 - [x] Cache DateFormatters
@@ -382,12 +554,12 @@ JarvisTheme.textPrimary  // reads system color scheme
 - [x] Add accessibility labels to key components
 - [x] Add input validation for tasks/wellness
 
-### Phase 2 — Architecture Cleanup
+### Phase 2 — Architecture Cleanup ✅
 - [x] Split StructuredMainView.swift into focused files
 - [x] Migrate from singletons to proper DI via DependencyContainer
 - [x] Connect UseCases layer or simplify
 - [x] Unify Repository pattern with PlannerStore
-- [x] Remove dead code
+- [x] Remove dead code (TaskStatistics.swift, _deprecated/)
 
 ### Phase 3 — Features
 - [ ] CloudKit migration (replaces KV store, removes 1MB limit)
@@ -398,8 +570,31 @@ JarvisTheme.textPrimary  // reads system color scheme
 - [ ] Collaborative task sharing
 
 ### Phase 4 — Polish
-- [ ] Full VoiceOver accessibility audit
-- [ ] Dynamic Type support
-- [ ] HTTPS backend migration
-- [ ] App Store preparation
-- [ ] Onboarding flow
+- [x] Full VoiceOver accessibility audit
+- [x] Dynamic Type support
+- [x] Onboarding flow
+- [x] Global error handling (ErrorHandler wired to root view)
+- [x] macOS keyboard shortcuts (⌘N, ⌘D, ⌘I, ⇧⌘A, ⌘L, ⌃⌘S)
+- [x] Validation error feedback (WellnessView, nutrition photo)
+
+### Phase 5 — AI-First Experience ✅
+- [x] AI intent routing (context search, briefing, coaching, delegation, general)
+- [x] AIContextEngine — cross-source semantic search
+- [x] MeetingBriefingService — meeting briefing generation
+- [x] AILifeCoach — personal coaching (fitness, nutrition, learning, meditation)
+- [x] Task delegation model (TaskDelegation, TaskSource)
+- [x] Backend endpoints (/ai/context-search, /ai/meeting-briefing, /ai/delegate-task)
+- [x] Inline AI command bar (voice + text + quick action chips)
+- [x] AIWelcomeHeader on Today tab
+- [x] Voice-first UI (mic button, speech recognition, auto-execute)
+
+### Phase 6 — Production Readiness (Next)
+- [ ] HTTPS backend migration (TLS certificates)
+- [ ] App Store preparation (metadata, screenshots, review)
+- [ ] Full L10n wiring (all hardcoded strings → L10n)
+- [ ] CloudKit migration (remove 1MB limit)
+- [ ] Actual Telegram/WhatsApp message sending for delegation
+- [ ] Unit test coverage expansion (target: 80%+)
+- [ ] Performance profiling (Instruments: Core Animation, Time Profiler)
+- [ ] Crash analytics integration (Sentry or Firebase Crashlytics)
+

@@ -22,49 +22,43 @@ struct ChartAnalyticsView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                LazyVStack(spacing: 20) {
+                VStack(spacing: 20) {
                     periodPicker
-                        .animateOnAppear(delay: 0)
                     
                     summaryCards
-                        .animateOnAppear(delay: 0.05)
                     
                     completionTrendChart
-                        .animateOnAppear(delay: 0.1)
                     
                     productivityByHourChart
-                        .animateOnAppear(delay: 0.15)
                     
                     categoryDistributionChart
-                        .animateOnAppear(delay: 0.2)
                     
                     priorityBreakdownChart
-                        .animateOnAppear(delay: 0.25)
                     
                     streakSection
-                        .animateOnAppear(delay: 0.3)
                     
                     if skillDeepAnalysis {
                         aiAdviceSection
-                            .animateOnAppear(delay: 0.35)
                     }
                 }
                 .padding()
             }
             .background(theme.background.ignoresSafeArea())
-            .navigationTitle("Аналитика")
+            .navigationTitle(L10n.analyticsTitle)
         }
     }
     
     // MARK: - Period Picker
     
     private var periodPicker: some View {
-        Picker("Период", selection: $selectedPeriod) {
+        Picker(L10n.periodLabel, selection: $selectedPeriod) {
             ForEach(AnalyticsPeriod.allCases) { period in
                 Text(period.title).tag(period)
             }
         }
         .pickerStyle(.segmented)
+        .accessibilityLabel(L10n.periodLabel)
+        .accessibilityHint(L10n.periodPickerHint)
     }
     
     // MARK: - Summary Cards
@@ -79,26 +73,26 @@ struct ChartAnalyticsView: View {
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 12) {
                 summaryCard(
-                    title: "Всего",
+                    title: L10n.total,
                     value: "\(total)",
                     icon: "list.bullet.clipboard",
                     color: JarvisTheme.accentBlue
                 )
                 summaryCard(
-                    title: "Выполнено",
+                    title: L10n.completed,
                     value: "\(completed)",
                     icon: "checkmark.circle.fill",
                     color: JarvisTheme.accentGreen,
                     subtitle: "\(Int(rate * 100))%"
                 )
                 summaryCard(
-                    title: "В среднем/день",
+                    title: L10n.avgPerDay,
                     value: String(format: "%.1f", avgPerDay),
                     icon: "chart.bar.fill",
                     color: JarvisTheme.accent
                 )
                 summaryCard(
-                    title: "Серия дней",
+                    title: L10n.streakDays,
                     value: "\(currentStreak)",
                     icon: "flame.fill",
                     color: JarvisTheme.accentOrange
@@ -123,24 +117,29 @@ struct ChartAnalyticsView: View {
             Text(value)
                 .font(.system(size: 28, weight: .bold))
                 .foregroundColor(theme.textPrimary)
+                .minimumScaleFactor(0.7)
             Text(title)
                 .font(.system(size: 12))
                 .foregroundColor(theme.textSecondary)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
         }
         .padding(16)
-        .frame(width: 140)
+        .frame(minWidth: 120, idealWidth: 140)
         .background(
             RoundedRectangle(cornerRadius: 16)
                 .fill(theme.cardBackground)
                 .shadow(color: theme.cardShadow, radius: 4, y: 2)
         )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title): \(value)\(subtitle.map { ", \($0)" } ?? "")")
     }
     
     // MARK: - Completion Trend Chart
     
     private var completionTrendChart: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Тренд выполнения")
+            Text(L10n.completionTrend)
                 .font(.headline.weight(.semibold))
                 .foregroundStyle(theme.textPrimary)
             
@@ -151,59 +150,32 @@ struct ChartAnalyticsView: View {
                 Chart {
                     ForEach(data) { day in
                         BarMark(
-                            x: .value("Дата", day.date, unit: .day),
-                            y: .value("Всего", day.total)
+                            x: .value(L10n.dateLabel, day.date, unit: .day),
+                            y: .value(L10n.total, day.total)
                         )
                         .foregroundStyle(JarvisTheme.accentBlue.opacity(0.4))
-                        .cornerRadius(4)
                         
                         BarMark(
-                            x: .value("Дата", day.date, unit: .day),
-                            y: .value("Выполнено", day.completed)
+                            x: .value(L10n.dateLabel, day.date, unit: .day),
+                            y: .value(L10n.completed, day.completed)
                         )
                         .foregroundStyle(JarvisTheme.accentGreen)
-                        .cornerRadius(4)
-                    }
-                    
-                    if data.count > 2 {
-                        ForEach(data) { day in
-                            LineMark(
-                                x: .value("Дата", day.date, unit: .day),
-                                y: .value("Выполнено", day.completed)
-                            )
-                            .foregroundStyle(JarvisTheme.accent)
-                            .lineStyle(StrokeStyle(lineWidth: 2))
-                            .interpolationMethod(.catmullRom)
-                            
-                            PointMark(
-                                x: .value("Дата", day.date, unit: .day),
-                                y: .value("Выполнено", day.completed)
-                            )
-                            .foregroundStyle(JarvisTheme.accent)
-                            .symbolSize(30)
-                        }
                     }
                 }
-                .chartYAxisLabel("Задачи")
-                .chartXAxis {
-                    AxisMarks(values: .stride(by: chartXStride)) { value in
-                        AxisGridLine()
-                        AxisValueLabel(format: chartDateFormat)
-                    }
-                }
-                .chartLegend(.visible)
+                .chartYAxisLabel(L10n.tasksLabel)
                 .frame(height: 220)
-                .animation(.easeInOut(duration: 0.6), value: data.map(\.id))
             }
         }
         .jarvisSectionCard()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(L10n.completionTrend)
     }
     
     // MARK: - Productivity by Hour Chart
     
     private var productivityByHourChart: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Продуктивность по часам")
+            Text(L10n.productivityByHour)
                 .font(.headline.weight(.semibold))
                 .foregroundStyle(theme.textPrimary)
             
@@ -213,55 +185,46 @@ struct ChartAnalyticsView: View {
             } else {
                 Chart(hourData) { item in
                     BarMark(
-                        x: .value("Час", "\(item.hour):00"),
-                        y: .value("Задач", item.count)
+                        x: .value(L10n.hourLabel, "\(item.hour):00"),
+                        y: .value(L10n.countLabel, item.count)
                     )
-                    .foregroundStyle(
-                        Gradient(colors: [
-                            JarvisTheme.accent.opacity(0.6),
-                            JarvisTheme.accent
-                        ])
-                    )
-                    .cornerRadius(6)
+                    .foregroundStyle(JarvisTheme.accent)
                 }
-                .chartYAxisLabel("Выполнено")
+                .chartYAxisLabel(L10n.completed)
                 .frame(height: 200)
-                .animation(.easeInOut(duration: 0.6), value: hourData.map(\.hour))
             }
         }
         .jarvisSectionCard()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(L10n.productivityByHour)
     }
     
     // MARK: - Category Distribution Chart
     
     private var categoryDistributionChart: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Категории задач")
+            Text(L10n.taskCategories)
                 .font(.headline.weight(.semibold))
                 .foregroundStyle(theme.textPrimary)
             
-            let catData = categoryBreakdown
+            let catData = categoryBreakdown.filter { $0.count > 0 }
             if catData.isEmpty {
                 noDataPlaceholder
             } else {
+                // Horizontal bar chart instead of SectorMark (more stable on macOS)
                 Chart(catData) { item in
-                    SectorMark(
-                        angle: .value("Количество", item.count),
-                        innerRadius: .ratio(0.5),
-                        angularInset: 2
+                    BarMark(
+                        x: .value(L10n.countLabel, item.count),
+                        y: .value(L10n.categoryLabel, item.name)
                     )
                     .foregroundStyle(item.color)
-                    .cornerRadius(4)
-                    .annotation(position: .overlay) {
-                        if item.count > 0 {
-                            Text("\(item.count)")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundColor(.white)
-                        }
+                    .annotation(position: .trailing) {
+                        Text("\(item.count)")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(theme.textSecondary)
                     }
                 }
-                .frame(height: 200)
-                .animation(.easeInOut(duration: 0.6), value: catData.map(\.name))
+                .frame(height: max(120, CGFloat(catData.count) * 40))
                 
                 // Legend
                 LazyVGrid(columns: [
@@ -287,13 +250,15 @@ struct ChartAnalyticsView: View {
             }
         }
         .jarvisSectionCard()
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(L10n.taskCategories)
     }
     
     // MARK: - Priority Breakdown Chart
     
     private var priorityBreakdownChart: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("По приоритету")
+            Text(L10n.byPriority)
                 .font(.headline.weight(.semibold))
                 .foregroundStyle(theme.textPrimary)
             
@@ -303,11 +268,10 @@ struct ChartAnalyticsView: View {
             } else {
                 Chart(prioData) { item in
                     BarMark(
-                        x: .value("Приоритет", item.name),
-                        y: .value("Количество", item.count)
+                        x: .value(L10n.priorityLabel, item.name),
+                        y: .value(L10n.countLabel, item.count)
                     )
                     .foregroundStyle(item.color)
-                    .cornerRadius(6)
                     .annotation(position: .top) {
                         if item.count > 0 {
                             Text("\(item.count)")
@@ -317,10 +281,11 @@ struct ChartAnalyticsView: View {
                     }
                 }
                 .frame(height: 160)
-                .animation(.easeInOut(duration: 0.6), value: prioData.map(\.count))
             }
         }
         .jarvisSectionCard()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(L10n.byPriority)
     }
     
     // MARK: - Streak Section
@@ -333,7 +298,7 @@ struct ChartAnalyticsView: View {
                     .foregroundColor(JarvisTheme.accentOrange)
                 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Серия продуктивности")
+                    Text(L10n.productivityStreak)
                         .font(.headline.weight(.semibold))
                         .foregroundStyle(theme.textPrimary)
                     
@@ -376,6 +341,8 @@ struct ChartAnalyticsView: View {
             .frame(maxWidth: .infinity)
         }
         .jarvisSectionCard()
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(L10n.productivityStreak): \(currentStreak) \(L10n.streakDaysLabel). \(streakDescription)")
     }
     
     // MARK: - AI Advice
@@ -383,7 +350,7 @@ struct ChartAnalyticsView: View {
     private var aiAdviceSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("AI-анализ")
+                Text(L10n.aiAnalysis)
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(theme.textPrimary)
                 Spacer()
@@ -391,7 +358,7 @@ struct ChartAnalyticsView: View {
                 if isLoadingAdvice {
                     ProgressView()
                 } else {
-                    Button("Обновить") {
+                    Button(L10n.refresh) {
                         Task { await requestLLMAdvice() }
                     }
                     .buttonStyle(ChipButtonStyle())
@@ -405,6 +372,8 @@ struct ChartAnalyticsView: View {
                 .foregroundStyle(llmAdvice == nil ? theme.textSecondary : theme.textPrimary)
         }
         .jarvisSectionCard()
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(L10n.aiAnalysis): \(llmAdvice ?? smartSuggestion)")
     }
     
     // MARK: - No Data Placeholder
@@ -414,12 +383,13 @@ struct ChartAnalyticsView: View {
             Image(systemName: "chart.bar.xaxis")
                 .font(.system(size: 32))
                 .foregroundColor(theme.textTertiary)
-            Text("Нет данных за этот период")
+            Text(L10n.noDataPeriod)
                 .font(.subheadline)
                 .foregroundColor(theme.textTertiary)
         }
         .frame(maxWidth: .infinity)
         .frame(height: 120)
+        .accessibilityLabel(L10n.noDataPeriod)
     }
     
     // MARK: - Data Calculations
@@ -463,8 +433,12 @@ struct ChartAnalyticsView: View {
         
         guard !hourCounts.isEmpty else { return [] }
         
-        let minHour = max(hourCounts.keys.min() ?? 6, 5)
-        let maxHour = min(hourCounts.keys.max() ?? 22, 23)
+        let rawMin = hourCounts.keys.min() ?? 6
+        let rawMax = hourCounts.keys.max() ?? 22
+        let minHour = min(rawMin, rawMax)
+        let maxHour = max(rawMin, rawMax)
+        
+        guard minHour <= maxHour else { return [] }
         
         return (minHour...maxHour).map { hour in
             HourProductivity(hour: hour, count: hourCounts[hour] ?? 0)
@@ -490,7 +464,7 @@ struct ChartAnalyticsView: View {
                 ))
             } else {
                 result.append(CategoryData(
-                    name: "Без категории",
+                    name: L10n.noCategory,
                     count: count,
                     color: JarvisTheme.textSecondary
                 ))
@@ -503,19 +477,19 @@ struct ChartAnalyticsView: View {
         let periodTasks = tasksInPeriod
         return [
             PriorityData(
-                name: "Высокий",
+                name: L10n.priorityHigh,
                 priority: .high,
                 count: periodTasks.filter { $0.priority == .high }.count,
                 color: .red
             ),
             PriorityData(
-                name: "Средний",
+                name: L10n.priorityMedium,
                 priority: .medium,
                 count: periodTasks.filter { $0.priority == .medium }.count,
                 color: JarvisTheme.accentOrange
             ),
             PriorityData(
-                name: "Низкий",
+                name: L10n.priorityLow,
                 priority: .low,
                 count: periodTasks.filter { $0.priority == .low }.count,
                 color: JarvisTheme.accentGreen
@@ -609,22 +583,6 @@ struct ChartAnalyticsView: View {
         }
     }
     
-    private var chartXStride: Calendar.Component {
-        switch selectedPeriod {
-        case .week: return .day
-        case .month: return .weekOfYear
-        case .quarter: return .month
-        }
-    }
-    
-    private var chartDateFormat: Date.FormatStyle {
-        switch selectedPeriod {
-        case .week: return .dateTime.weekday(.abbreviated)
-        case .month: return .dateTime.day().month(.abbreviated)
-        case .quarter: return .dateTime.month(.abbreviated)
-        }
-    }
-    
     private func requestLLMAdvice() async {
         guard !store.tasks.isEmpty else { return }
         isLoadingAdvice = true
@@ -639,12 +597,18 @@ struct ChartAnalyticsView: View {
 // MARK: - Analytics Period
 
 enum AnalyticsPeriod: String, CaseIterable, Identifiable {
-    case week = "Неделя"
-    case month = "Месяц"
-    case quarter = "Квартал"
+    case week = "week"
+    case month = "month"
+    case quarter = "quarter"
     
     var id: String { rawValue }
-    var title: String { rawValue }
+    var title: String {
+        switch self {
+        case .week: return L10n.periodWeek
+        case .month: return L10n.periodMonth
+        case .quarter: return L10n.periodQuarter
+        }
+    }
 }
 
 // MARK: - Analytics Data Models

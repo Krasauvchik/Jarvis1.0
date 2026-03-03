@@ -55,5 +55,9 @@
 			</dict>
 		</dict>
 	</dict>
+
+	<!-- App Store category -->
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
 </dict>
 </plist>

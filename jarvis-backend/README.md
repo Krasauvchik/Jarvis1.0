@@ -39,3 +39,44 @@ sudo systemctl status jarvis-backend
 - **Google Calendar**: OAuth + Google Calendar API
 - **Nutrition AI**: Gemini Vision / OpenAI для распознавания блюд
 - **LLM**: OpenAI / Anthropic для умных советов
+
+## HTTPS (TLS)
+
+По умолчанию backend запускается с самоподписанным TLS-сертификатом.
+
+### Генерация сертификата (автоматически при первом запуске)
+
+```bash
+bash generate_certs.sh
+```
+
+### Запуск с HTTPS (по умолчанию)
+
+```bash
+bash start.sh
+```
+
+### Запуск без TLS (HTTP) — только для отладки
+
+```bash
+JARVIS_NO_TLS=1 bash start.sh
+```
+
+### Доверие сертификату на macOS (убирает предупреждения)
+
+```bash
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain certs/server.crt
+```
+
+### Продакшн — Let's Encrypt
+
+Для продакшна замените самоподписанные сертификаты на Let's Encrypt:
+
+```bash
+# Через certbot:
+sudo certbot certonly --standalone -d your-domain.com
+# Затем укажите пути:
+uvicorn main:app --host 0.0.0.0 --port 443 \
+    --ssl-keyfile /etc/letsencrypt/live/your-domain.com/privkey.pem \
+    --ssl-certfile /etc/letsencrypt/live/your-domain.com/fullchain.pem
+```

@@ -15,9 +15,9 @@ enum ThemeMode: String, CaseIterable, Codable {
     
     var displayName: String {
         switch self {
-        case .light: return "Светлая"
-        case .dark: return "Тёмная"
-        case .system: return "Системная"
+        case .light: return L10n.settingsThemeLight
+        case .dark: return L10n.settingsThemeDark
+        case .system: return L10n.settingsThemeSystem
         }
     }
     

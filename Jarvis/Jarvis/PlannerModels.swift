@@ -49,6 +49,41 @@ enum TaskIcon: String, CaseIterable, Codable, Sendable {
     var systemName: String { rawValue }
 }
 
+// MARK: - Task Suggestion (quick templates like Structured)
+
+struct TaskSuggestion {
+    let title: String
+    let icon: String
+    let durationMinutes: Int
+    let colorIndex: Int
+    let suggestedHour: Int?
+    
+    var timeRange: String {
+        guard let hour = suggestedHour else { return "\(durationMinutes) min" }
+        let endMinutes = hour * 60 + durationMinutes
+        let endH = endMinutes / 60
+        let endM = endMinutes % 60
+        let durText: String
+        if durationMinutes >= 60 {
+            let h = durationMinutes / 60
+            let m = durationMinutes % 60
+            durText = m == 0 ? "\(h) hr" : "\(h) hr, \(m) min"
+        } else {
+            durText = "\(durationMinutes) min"
+        }
+        return String(format: "%02d:00 – %02d:%02d (%@)", hour, endH, endM, durText)
+    }
+    
+    static let defaults: [TaskSuggestion] = [
+        TaskSuggestion(title: "Answer Emails", icon: "envelope.fill", durationMinutes: 15, colorIndex: 0, suggestedHour: 10),
+        TaskSuggestion(title: "Go for a Run!", icon: "figure.run", durationMinutes: 60, colorIndex: 3, suggestedHour: 12),
+        TaskSuggestion(title: "Go Shopping", icon: "cart.fill", durationMinutes: 60, colorIndex: 4, suggestedHour: 17),
+        TaskSuggestion(title: "Watch a Movie", icon: "tv.fill", durationMinutes: 90, colorIndex: 5, suggestedHour: 20),
+        TaskSuggestion(title: "Read a Book", icon: "book.fill", durationMinutes: 30, colorIndex: 1, suggestedHour: 21),
+        TaskSuggestion(title: "Meditate", icon: "brain.head.profile", durationMinutes: 15, colorIndex: 6, suggestedHour: 7),
+    ]
+}
+
 // MARK: - Task Category
 
 struct TaskCategory: Identifiable, Codable, Hashable, Sendable {
@@ -56,16 +91,39 @@ struct TaskCategory: Identifiable, Codable, Hashable, Sendable {
     var name: String
     var colorIndex: Int
     var icon: String
+    var parentID: UUID?
+    var sortOrder: Int
+    var isArchived: Bool
 
-    init(id: UUID = UUID(), name: String, colorIndex: Int = 0, icon: String = "folder.fill") {
+    init(id: UUID = UUID(), name: String, colorIndex: Int = 0, icon: String = "folder.fill", parentID: UUID? = nil, sortOrder: Int = 0, isArchived: Bool = false) {
         self.id = id
         self.name = name
         self.colorIndex = colorIndex
         self.icon = icon
+        self.parentID = parentID
+        self.sortOrder = sortOrder
+        self.isArchived = isArchived
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case id, name, colorIndex, icon, parentID, sortOrder, isArchived
+    }
+    
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        colorIndex = try c.decode(Int.self, forKey: .colorIndex)
+        icon = try c.decodeIfPresent(String.self, forKey: .icon) ?? "folder.fill"
+        parentID = try c.decodeIfPresent(UUID.self, forKey: .parentID)
+        sortOrder = try c.decodeIfPresent(Int.self, forKey: .sortOrder) ?? 0
+        isArchived = try c.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
     }
 
     var color: Color {
-        JarvisTheme.taskColors[colorIndex % JarvisTheme.taskColors.count]
+        let count = JarvisTheme.taskColors.count
+        guard count > 0 else { return .gray }
+        return JarvisTheme.taskColors[((colorIndex % count) + count) % count]
     }
 }
 
@@ -90,51 +148,211 @@ struct TaskTag: Identifiable, Codable, Hashable, Sendable {
 // MARK: - Task Priority (по мотивам таск-менеджеров: React-Django Task Manager, Task-Sync-Pro)
 
 enum TaskPriority: String, Codable, Hashable, CaseIterable, Sendable {
-    case low = "low"
-    case medium = "medium"
+    case urgent = "urgent"
     case high = "high"
+    case medium = "medium"
+    case low = "low"
 
     var displayName: String {
         switch self {
-        case .low: return "Низкий"
-        case .medium: return "Средний"
+        case .urgent: return "Критичный"
         case .high: return "Высокий"
+        case .medium: return "Средний"
+        case .low: return "Низкий"
         }
     }
 
     var icon: String {
         switch self {
-        case .low: return "arrow.down.circle.fill"
-        case .medium: return "circle.fill"
+        case .urgent: return "exclamationmark.triangle.fill"
         case .high: return "exclamationmark.circle.fill"
+        case .medium: return "circle.fill"
+        case .low: return "arrow.down.circle.fill"
         }
     }
 
-    /// Порядок для сортировки: высокий первый (0), затем средний (1), низкий (2).
+    /// Порядок для сортировки: критичный первый (0), высокий (1), средний (2), низкий (3).
     var sortOrder: Int {
         switch self {
-        case .high: return 0
-        case .medium: return 1
-        case .low: return 2
+        case .urgent: return 0
+        case .high: return 1
+        case .medium: return 2
+        case .low: return 3
         }
+    }
+    
+    var color: Color {
+        switch self {
+        case .urgent: return .red
+        case .high: return .orange
+        case .medium: return .yellow
+        case .low: return .green
+        }
+    }
+}
+
+// MARK: - Task Source
+
+enum TaskSource: String, Codable, Hashable, Sendable {
+    case manual
+    case voice
+    case calendar
+    case mail
+    case siri
+    case widget
+    case messenger
+    case delegated    // задача назначена другим пользователем
+    case aiCoach      // создана AI-коучем
+}
+
+// MARK: - Task Delegation
+
+/// Модель делегирования задач другим пользователям через мессенджеры.
+struct TaskDelegation: Codable, Identifiable, Sendable {
+    let id: UUID
+    let taskId: UUID
+    let assigneeHandle: String     // ник в Telegram/WhatsApp
+    let assigneePlatform: String   // "telegram" | "whatsapp"
+    let assignedAt: Date
+    var status: DelegationStatus
+    var responseMessage: String?
+    
+    enum DelegationStatus: String, Codable, Sendable {
+        case pending    // отправлено, ждём подтверждения
+        case accepted   // пользователь принял
+        case declined   // пользователь отклонил
+        case completed  // задача выполнена
+    }
+    
+    init(taskId: UUID, assigneeHandle: String, platform: String) {
+        self.id = UUID()
+        self.taskId = taskId
+        self.assigneeHandle = assigneeHandle
+        self.assigneePlatform = platform
+        self.assignedAt = Date()
+        self.status = .pending
     }
 }
 
 // MARK: - Recurrence
 
-enum RecurrenceRule: String, Codable, Hashable, CaseIterable, Sendable {
-    case daily, weekdays, weekends, weekly, monthly, yearly
-
-    var displayName: String {
-        switch self {
-        case .daily: return "Каждый день"
-        case .weekdays: return "Будни"
-        case .weekends: return "Выходные"
-        case .weekly: return "Еженедельно"
-        case .monthly: return "Ежемесячно"
-        case .yearly: return "Ежегодно"
+struct RecurrenceRule: Codable, Hashable, Sendable {
+    var frequency: Frequency
+    var interval: Int
+    var daysOfWeek: [Int]?
+    var endDate: Date?
+    var maxOccurrences: Int?
+    
+    enum Frequency: String, Codable, CaseIterable, Sendable {
+        case daily, weekdays, weekends, weekly, monthly, yearly
+        
+        var displayName: String {
+            switch self {
+            case .daily: return "Каждый день"
+            case .weekdays: return "Будни"
+            case .weekends: return "Выходные"
+            case .weekly: return "Еженедельно"
+            case .monthly: return "Ежемесячно"
+            case .yearly: return "Ежегодно"
+            }
         }
     }
+    
+    var displayName: String {
+        if interval <= 1 {
+            return frequency.displayName
+        }
+        switch frequency {
+        case .daily: return "Каждые \(interval) дн."
+        case .weekly: return "Каждые \(interval) нед."
+        case .monthly: return "Каждые \(interval) мес."
+        case .yearly: return "Каждые \(interval) лет"
+        case .weekdays, .weekends: return frequency.displayName
+        }
+    }
+    
+    // Convenience static constructors for backward compatibility
+    static let daily = RecurrenceRule(frequency: .daily)
+    static let weekdays = RecurrenceRule(frequency: .weekdays)
+    static let weekends = RecurrenceRule(frequency: .weekends)
+    static let weekly = RecurrenceRule(frequency: .weekly)
+    static let monthly = RecurrenceRule(frequency: .monthly)
+    static let yearly = RecurrenceRule(frequency: .yearly)
+    
+    init(frequency: Frequency, interval: Int = 1, daysOfWeek: [Int]? = nil, endDate: Date? = nil, maxOccurrences: Int? = nil) {
+        self.frequency = frequency
+        self.interval = max(1, interval)
+        self.daysOfWeek = daysOfWeek
+        self.endDate = endDate
+        self.maxOccurrences = maxOccurrences
+    }
+    
+    // MARK: Backward-compatible Codable (decodes old string format "daily" and new struct format)
+    
+    enum CodingKeys: String, CodingKey {
+        case frequency, interval, daysOfWeek, endDate, maxOccurrences
+    }
+    
+    init(from decoder: Decoder) throws {
+        // Try plain string first (old enum format: "daily", "weekly", etc.)
+        if let singleContainer = try? decoder.singleValueContainer(),
+           let string = try? singleContainer.decode(String.self),
+           let freq = Frequency(rawValue: string) {
+            self.frequency = freq
+            self.interval = 1
+            self.daysOfWeek = nil
+            self.endDate = nil
+            self.maxOccurrences = nil
+            return
+        }
+        // New struct format
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        frequency = try c.decode(Frequency.self, forKey: .frequency)
+        interval = try c.decodeIfPresent(Int.self, forKey: .interval) ?? 1
+        daysOfWeek = try c.decodeIfPresent([Int].self, forKey: .daysOfWeek)
+        endDate = try c.decodeIfPresent(Date.self, forKey: .endDate)
+        maxOccurrences = try c.decodeIfPresent(Int.self, forKey: .maxOccurrences)
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(frequency, forKey: .frequency)
+        if interval != 1 { try c.encode(interval, forKey: .interval) }
+        try c.encodeIfPresent(daysOfWeek, forKey: .daysOfWeek)
+        try c.encodeIfPresent(endDate, forKey: .endDate)
+        try c.encodeIfPresent(maxOccurrences, forKey: .maxOccurrences)
+    }
+}
+
+// MARK: - Task Reminder
+
+struct TaskReminder: Identifiable, Codable, Hashable, Sendable {
+    let id: UUID
+    var offsetMinutes: Int  // negative = before task start (e.g. -15 = 15 min before)
+    var isEnabled: Bool
+    
+    init(id: UUID = UUID(), offsetMinutes: Int = -15, isEnabled: Bool = true) {
+        self.id = id
+        self.offsetMinutes = offsetMinutes
+        self.isEnabled = isEnabled
+    }
+    
+    var displayName: String {
+        let abs = abs(offsetMinutes)
+        if abs == 0 { return "В момент начала" }
+        if abs < 60 { return "\(abs) мин. до" }
+        if abs == 60 { return "1 час до" }
+        if abs < 1440 { return "\(abs / 60) ч. до" }
+        return "\(abs / 1440) дн. до"
+    }
+    
+    /// Common reminder presets
+    static let atStart = TaskReminder(offsetMinutes: 0)
+    static let fiveMinBefore = TaskReminder(offsetMinutes: -5)
+    static let fifteenMinBefore = TaskReminder(offsetMinutes: -15)
+    static let thirtyMinBefore = TaskReminder(offsetMinutes: -30)
+    static let oneHourBefore = TaskReminder(offsetMinutes: -60)
+    static let oneDayBefore = TaskReminder(offsetMinutes: -1440)
 }
 
 // MARK: - Task Model
@@ -161,6 +379,16 @@ struct PlannerTask: Identifiable, Codable, Hashable, Sendable {
     var parentTaskId: UUID?
     /// Project ID for project grouping (Phase 3)
     var projectId: UUID?
+    /// Timestamp when task was created
+    var createdAt: Date
+    /// Timestamp of last modification
+    var modifiedAt: Date
+    /// Timestamp when task was completed (nil if not completed)
+    var completedAt: Date?
+    /// How the task was created
+    var source: TaskSource
+    /// Multiple reminders per task (replaces simple hasAlarm)
+    var reminders: [TaskReminder]
 
     init(
         id: UUID = UUID(),
@@ -181,7 +409,12 @@ struct PlannerTask: Identifiable, Codable, Hashable, Sendable {
         calendarEventId: String? = nil,
         priority: TaskPriority = .medium,
         parentTaskId: UUID? = nil,
-        projectId: UUID? = nil
+        projectId: UUID? = nil,
+        createdAt: Date = Date(),
+        modifiedAt: Date = Date(),
+        completedAt: Date? = nil,
+        source: TaskSource = .manual,
+        reminders: [TaskReminder] = []
     ) {
         self.id = id
         self.title = title
@@ -202,10 +435,15 @@ struct PlannerTask: Identifiable, Codable, Hashable, Sendable {
         self.priority = priority
         self.parentTaskId = parentTaskId
         self.projectId = projectId
+        self.createdAt = createdAt
+        self.modifiedAt = modifiedAt
+        self.completedAt = completedAt
+        self.source = source
+        self.reminders = reminders
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, title, notes, date, durationMinutes, isAllDay, recurrenceRule, isCompleted, hasAlarm, isInbox, completedRecurrenceDates, colorIndex, icon, categoryId, tagIds, calendarEventId, priority, parentTaskId, projectId
+        case id, title, notes, date, durationMinutes, isAllDay, recurrenceRule, isCompleted, hasAlarm, isInbox, completedRecurrenceDates, colorIndex, icon, categoryId, tagIds, calendarEventId, priority, parentTaskId, projectId, createdAt, modifiedAt, completedAt, source, reminders
     }
 
     init(from decoder: Decoder) throws {
@@ -229,6 +467,12 @@ struct PlannerTask: Identifiable, Codable, Hashable, Sendable {
         priority = try c.decodeIfPresent(TaskPriority.self, forKey: .priority) ?? .medium
         parentTaskId = try c.decodeIfPresent(UUID.self, forKey: .parentTaskId)
         projectId = try c.decodeIfPresent(UUID.self, forKey: .projectId)
+        // New fields — backward compatible with default values
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? (try c.decode(Date.self, forKey: .date))
+        modifiedAt = try c.decodeIfPresent(Date.self, forKey: .modifiedAt) ?? Date()
+        completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
+        source = try c.decodeIfPresent(TaskSource.self, forKey: .source) ?? .manual
+        reminders = try c.decodeIfPresent([TaskReminder].self, forKey: .reminders) ?? []
     }
 
     func encode(to encoder: Encoder) throws {
@@ -252,6 +496,11 @@ struct PlannerTask: Identifiable, Codable, Hashable, Sendable {
         try c.encode(priority, forKey: .priority)
         try c.encodeIfPresent(parentTaskId, forKey: .parentTaskId)
         try c.encodeIfPresent(projectId, forKey: .projectId)
+        try c.encode(createdAt, forKey: .createdAt)
+        try c.encode(modifiedAt, forKey: .modifiedAt)
+        try c.encodeIfPresent(completedAt, forKey: .completedAt)
+        try c.encode(source, forKey: .source)
+        try c.encode(reminders, forKey: .reminders)
     }
 
     var endDate: Date {
@@ -259,7 +508,9 @@ struct PlannerTask: Identifiable, Codable, Hashable, Sendable {
     }
     
     var taskColor: Color {
-        JarvisTheme.taskColors[colorIndex % JarvisTheme.taskColors.count]
+        let count = JarvisTheme.taskColors.count
+        guard count > 0 else { return .gray }
+        return JarvisTheme.taskColors[((colorIndex % count) + count) % count]
     }
 }
 
@@ -338,16 +589,44 @@ struct Project: Identifiable, Codable, Hashable, Sendable {
 final class PlannerStore: ObservableObject {
     static let shared = PlannerStore()
     
-    @Published var tasks: [PlannerTask] = []
+    @Published var tasks: [PlannerTask] = [] {
+        didSet { invalidateCaches() }
+    }
     @Published var dayBounds: DayBounds = .default
     @Published var categories: [TaskCategory] = []
     @Published var tags: [TaskTag] = []
     @Published var projects: [Project] = []
 
+    // MARK: - Cached Computations
+    
+    /// Кэш inbox-задач — пересчитывается только при изменении tasks
+    private(set) var cachedInboxTasks: [PlannerTask] = []
+    /// Кэш выполненных задач
+    private(set) var cachedCompletedTasks: [PlannerTask] = []
+    /// Кэш задач по дню (ключ: startOfDay)
+    private var tasksByDayCache: [Date: [PlannerTask]] = [:]
+    /// Кэш timeline-задач по дню
+    private var timelineByDayCache: [Date: [PlannerTask]] = [:]
+    /// Кэш allDay-задач по дню
+    private var allDayByDayCache: [Date: [PlannerTask]] = [:]
+    /// Кэш количества задач по секции (для sidebar badges)
+    private var sectionCountCache: [NavigationSection: Int] = [:]
+
     private let calendar = Calendar.current
     private var syncObserver: NSObjectProtocol?
     private var saveTask: Task<Void, Never>?
+    private var cloudSaveTask: Task<Void, Never>?
     private let appGroupDefaults = UserDefaults(suiteName: Config.appGroupSuite)
+    
+    /// Сбрасывает все кэши — вызывается при любом изменении tasks
+    private func invalidateCaches() {
+        cachedInboxTasks = tasks.lazy.filter(\.isInbox).sorted { ($0.priority.sortOrder, $0.date) < ($1.priority.sortOrder, $1.date) }
+        cachedCompletedTasks = tasks.filter(\.isCompleted).sorted { $0.date > $1.date }
+        tasksByDayCache.removeAll(keepingCapacity: true)
+        timelineByDayCache.removeAll(keepingCapacity: true)
+        allDayByDayCache.removeAll(keepingCapacity: true)
+        sectionCountCache.removeAll(keepingCapacity: true)
+    }
     
     init() {
         load()
@@ -393,87 +672,124 @@ final class PlannerStore: ObservableObject {
     private let decoder = JSONDecoder()
     
     /// Debounced save — coalesces rapid changes (e.g. drag-to-reschedule) into a single disk write.
+    /// Local persist is fast (0.3s debounce), cloud sync is slower (2s debounce) to avoid iCloud throttling.
     private func save() {
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             // 0.3s debounce for rapid successive changes
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled, let self else { return }
-            self.persistNow()
+            self.persistLocal()
+        }
+        
+        // Cloud sync with longer debounce to avoid hammering iCloud KV store
+        cloudSaveTask?.cancel()
+        cloudSaveTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s debounce
+            guard !Task.isCancelled, let self else { return }
+            self.persistCloud()
         }
     }
     
-    /// Immediate write — call only when you need guaranteed persistence (e.g. app backgrounding).
-    func persistNow() {
-        do {
-            let data = try encoder.encode(tasks)
-            UserDefaults.standard.set(data, forKey: Config.Storage.tasksKey)
-            appGroupDefaults?.set(data, forKey: Config.Storage.tasksKey)
-        } catch {
-            Logger.shared.error("Failed to save tasks: \(error.localizedDescription)")
-        }
+    /// Local-only write — SwiftData (primary) + UserDefaults/AppGroup (widget fallback). Called on debounce or background.
+    private func persistLocal() {
+        // Write to SwiftData (primary persistence)
+        DataPersistence.shared.saveTasks(tasks)
+        
+        // Widget snapshot via AppGroup (still needed for widget extension)
         if let widgetData = try? encoder.encode(
             tasks.prefix(20).map { WidgetTaskSnapshot(id: $0.id, title: $0.title, date: $0.date, isCompleted: $0.isCompleted, isAllDay: $0.isAllDay, colorIndex: $0.colorIndex) }
         ) {
             appGroupDefaults?.set(widgetData, forKey: "jarvis_widget_tasks")
         }
-        if let catData = try? encoder.encode(categories) {
-            UserDefaults.standard.set(catData, forKey: Config.Storage.categoriesKey)
-        }
-        if let tagData = try? encoder.encode(tags) {
-            UserDefaults.standard.set(tagData, forKey: Config.Storage.tagsKey)
-        }
-        if let projectData = try? encoder.encode(projects) {
-            UserDefaults.standard.set(projectData, forKey: Config.Storage.projectsKey)
-        }
+        
+        // Save categories, tags, projects to SwiftData
+        for category in categories { DataPersistence.shared.saveCategory(category) }
+        for tag in tags { DataPersistence.shared.saveTag(tag) }
+        for project in projects { DataPersistence.shared.saveProject(project) }
+    }
+    
+    /// Cloud write — SwiftData handles CloudKit sync automatically.
+    /// Legacy iCloud KV store still updated for backward compatibility with older app versions.
+    private func persistCloud() {
+        // SwiftData+CloudKit sync is automatic; this is legacy fallback only
         CloudSync.shared.saveTasks(tasks)
         CloudSync.shared.saveCategories(categories)
         CloudSync.shared.saveTags(tags)
     }
     
+    /// Immediate full write — call only when you need guaranteed persistence (e.g. app backgrounding).
+    func persistNow() {
+        persistLocal()
+        persistCloud()
+    }
+    
     private func load() {
-        if let cloudTasks = CloudSync.shared.loadTasks() {
+        // Try SwiftData first (primary source after migration)
+        let sdTasks = DataPersistence.shared.loadTasks()
+        if !sdTasks.isEmpty {
+            tasks = sdTasks
+        } else if let cloudTasks = CloudSync.shared.loadTasks() {
             tasks = cloudTasks
         } else if let data = UserDefaults.standard.data(forKey: Config.Storage.tasksKey),
                   let decoded = try? decoder.decode([PlannerTask].self, from: data) {
             tasks = decoded
         }
+        
         if let cloudBounds = CloudSync.shared.loadDayBounds() {
             dayBounds = cloudBounds
         }
-        if let cloudCategories = CloudSync.shared.loadCategories() {
+        
+        let sdCategories = DataPersistence.shared.loadCategories()
+        if !sdCategories.isEmpty {
+            categories = sdCategories
+        } else if let cloudCategories = CloudSync.shared.loadCategories() {
             categories = cloudCategories
         } else if let data = UserDefaults.standard.data(forKey: Config.Storage.categoriesKey),
                   let decoded = try? decoder.decode([TaskCategory].self, from: data) {
             categories = decoded
         }
-        if let cloudTags = CloudSync.shared.loadTags() {
+        
+        let sdTags = DataPersistence.shared.loadTags()
+        if !sdTags.isEmpty {
+            tags = sdTags
+        } else if let cloudTags = CloudSync.shared.loadTags() {
             tags = cloudTags
         } else if let data = UserDefaults.standard.data(forKey: Config.Storage.tagsKey),
                   let decoded = try? decoder.decode([TaskTag].self, from: data) {
             tags = decoded
         }
-        // Load projects from local storage
-        if let data = UserDefaults.standard.data(forKey: Config.Storage.projectsKey),
+        
+        // Load projects
+        let sdProjects = DataPersistence.shared.loadProjects()
+        if !sdProjects.isEmpty {
+            projects = sdProjects
+        } else if let data = UserDefaults.standard.data(forKey: Config.Storage.projectsKey),
            let decoded = try? decoder.decode([Project].self, from: data) {
             projects = decoded
         }
     }
 
-    // MARK: - Computed Properties
+    // MARK: - Computed Properties (backed by cache)
     
     var inboxTasks: [PlannerTask] {
-        tasks.lazy.filter(\.isInbox).sorted { ($0.priority.sortOrder, $0.date) < ($1.priority.sortOrder, $1.date) }
+        cachedInboxTasks
     }
     
     var scheduledTasks: [PlannerTask] {
         tasks.lazy.filter { !$0.isInbox }.sorted { ($0.priority.sortOrder, $0.date) < ($1.priority.sortOrder, $1.date) }
     }
 
-    // MARK: - Task Queries
+    var completedTasks: [PlannerTask] {
+        cachedCompletedTasks
+    }
+
+    // MARK: - Task Queries (with per-day caching)
     
     func timelineTasks(for day: Date) -> [PlannerTask] {
-        tasks.compactMap { task -> PlannerTask? in
+        let dayStart = calendar.startOfDay(for: day)
+        if let cached = timelineByDayCache[dayStart] { return cached }
+        let result = tasks.compactMap { task -> PlannerTask? in
             guard !task.isInbox, !task.isAllDay else { return nil }
             if let rule = task.recurrenceRule {
                 guard recurrenceMatches(day: day, task: task, rule: rule) else { return nil }
@@ -485,10 +801,14 @@ final class PlannerStore: ObservableObject {
             }
             return calendar.isDate(task.date, inSameDayAs: day) ? task : nil
         }.sorted { ($0.priority.sortOrder, $0.date) < ($1.priority.sortOrder, $1.date) }
+        timelineByDayCache[dayStart] = result
+        return result
     }
     
     func allDayTasks(for day: Date) -> [PlannerTask] {
-        tasks.compactMap { task -> PlannerTask? in
+        let dayStart = calendar.startOfDay(for: day)
+        if let cached = allDayByDayCache[dayStart] { return cached }
+        let result = tasks.compactMap { task -> PlannerTask? in
             guard !task.isInbox, task.isAllDay else { return nil }
             if let rule = task.recurrenceRule {
                 guard recurrenceMatches(day: day, task: task, rule: rule) else { return nil }
@@ -499,25 +819,58 @@ final class PlannerStore: ObservableObject {
             }
             return calendar.isDate(task.date, inSameDayAs: day) ? task : nil
         }.sorted { ($0.priority.sortOrder, $0.date) < ($1.priority.sortOrder, $1.date) }
+        allDayByDayCache[dayStart] = result
+        return result
     }
     
     func tasksForDay(_ day: Date) -> [PlannerTask] {
-        (allDayTasks(for: day) + timelineTasks(for: day))
+        let dayStart = calendar.startOfDay(for: day)
+        if let cached = tasksByDayCache[dayStart] { return cached }
+        let result = allDayTasks(for: day) + timelineTasks(for: day)
+        tasksByDayCache[dayStart] = result
+        return result
     }
     
     private func recurrenceMatches(day: Date, task: PlannerTask, rule: RecurrenceRule) -> Bool {
         let dayStart = calendar.startOfDay(for: day)
         let taskDayStart = calendar.startOfDay(for: task.date)
         guard dayStart >= taskDayStart else { return false }
+        
+        // Check end date
+        if let endDate = rule.endDate, dayStart > calendar.startOfDay(for: endDate) { return false }
+        
         let weekday = calendar.component(.weekday, from: day)
         let dayOfMonth = calendar.component(.day, from: day)
-        switch rule {
-        case .daily: return true
+        
+        // Check custom daysOfWeek for weekly rules
+        if rule.frequency == .weekly, let days = rule.daysOfWeek, !days.isEmpty {
+            return days.contains(weekday)
+        }
+        
+        // Check interval (every N occurrences)
+        let interval = rule.interval
+        
+        switch rule.frequency {
+        case .daily:
+            if interval <= 1 { return true }
+            let daysBetween = calendar.dateComponents([.day], from: taskDayStart, to: dayStart).day ?? 0
+            return daysBetween % interval == 0
         case .weekdays: return (2...6).contains(weekday)
         case .weekends: return weekday == 1 || weekday == 7
-        case .weekly: return weekday == calendar.component(.weekday, from: task.date)
-        case .monthly: return dayOfMonth == calendar.component(.day, from: task.date)
-        case .yearly: return calendar.component(.month, from: day) == calendar.component(.month, from: task.date) && dayOfMonth == calendar.component(.day, from: task.date)
+        case .weekly:
+            if interval <= 1 { return weekday == calendar.component(.weekday, from: task.date) }
+            let weeksBetween = calendar.dateComponents([.weekOfYear], from: taskDayStart, to: dayStart).weekOfYear ?? 0
+            return weeksBetween % interval == 0 && weekday == calendar.component(.weekday, from: task.date)
+        case .monthly:
+            if interval <= 1 { return dayOfMonth == calendar.component(.day, from: task.date) }
+            let monthsBetween = calendar.dateComponents([.month], from: taskDayStart, to: dayStart).month ?? 0
+            return monthsBetween % interval == 0 && dayOfMonth == calendar.component(.day, from: task.date)
+        case .yearly:
+            if interval <= 1 {
+                return calendar.component(.month, from: day) == calendar.component(.month, from: task.date) && dayOfMonth == calendar.component(.day, from: task.date)
+            }
+            let yearsBetween = calendar.dateComponents([.year], from: taskDayStart, to: dayStart).year ?? 0
+            return yearsBetween % interval == 0 && calendar.component(.month, from: day) == calendar.component(.month, from: task.date) && dayOfMonth == calendar.component(.day, from: task.date)
         }
     }
     
@@ -542,7 +895,9 @@ final class PlannerStore: ObservableObject {
     
     func update(_ task: PlannerTask) {
         guard let idx = tasks.firstIndex(where: { $0.id == task.id }) else { return }
-        tasks[idx] = task
+        var updated = task
+        updated.modifiedAt = Date()
+        tasks[idx] = updated
         sortAndSave()
     }
     
@@ -581,7 +936,9 @@ final class PlannerStore: ObservableObject {
             }
         } else {
             tasks[idx].isCompleted.toggle()
+            tasks[idx].completedAt = tasks[idx].isCompleted ? Date() : nil
         }
+        tasks[idx].modifiedAt = Date()
         save()
     }
     
@@ -739,38 +1096,42 @@ final class PlannerStore: ObservableObject {
 
     // MARK: - Shared Navigation Helpers (used by SidebarView & StructuredMainView)
 
-    /// Task count for a given navigation section.
+    /// Task count for a given navigation section (cached per invalidation cycle).
     func taskCount(for section: NavigationSection) -> Int {
+        if let cached = sectionCountCache[section] { return cached }
         let startOfTomorrow = calendar.startOfDay(for: calendar.date(byAdding: .day, value: 1, to: Date()) ?? Date())
+        let count: Int
         switch section {
         case .inbox:
-            return tasks.count { $0.isInbox && !$0.isCompleted }
+            count = tasks.count { $0.isInbox && !$0.isCompleted }
         case .today:
-            return tasksForDay(Date()).count { !$0.isCompleted }
+            count = tasksForDay(Date()).count { !$0.isCompleted }
         case .scheduled:
-            return tasks.count { !$0.isInbox && !$0.isCompleted && $0.date < startOfTomorrow }
+            count = tasks.count { !$0.isInbox && !$0.isCompleted && $0.date < startOfTomorrow }
         case .futurePlans:
-            return tasks.count { !$0.isInbox && !$0.isCompleted && $0.date >= startOfTomorrow }
+            count = tasks.count { !$0.isInbox && !$0.isCompleted && $0.date >= startOfTomorrow }
         case .completed:
-            return tasks.count { $0.isCompleted }
+            count = cachedCompletedTasks.count
         case .all:
-            return tasks.count
-        case .calendarSection, .mailSection, .messengers, .analytics, .projects, .chat:
-            return 0
+            count = tasks.count
+        case .calendarSection, .mailSection, .messengers, .analytics, .projects, .chat, .health:
+            count = 0
         }
+        sectionCountCache[section] = count
+        return count
     }
 
     /// Move a task to the given navigation section (for drag & drop).
     func moveTask(taskID: UUID, to section: NavigationSection) {
         switch section {
-        case .chat, .calendarSection, .mailSection, .messengers, .analytics, .projects:
+        case .chat, .calendarSection, .mailSection, .messengers, .analytics, .projects, .health:
             return
         default: break
         }
         guard let task = tasks.first(where: { $0.id == taskID }) else { return }
         var updated = task
         switch section {
-        case .chat, .calendarSection, .mailSection, .messengers, .analytics, .projects:
+        case .chat, .calendarSection, .mailSection, .messengers, .analytics, .projects, .health:
             return
         case .inbox:
             updated.isInbox = true

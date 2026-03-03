@@ -39,15 +39,20 @@ extension View {
 struct AppearAnimationModifier: ViewModifier {
     let delay: Double
     @State private var isVisible = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     
     func body(content: Content) -> some View {
-        content
-            .opacity(isVisible ? 1 : 0)
-            .scaleEffect(isVisible ? 1 : 0.8)
-            .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(delay), value: isVisible)
-            .onAppear {
-                isVisible = true
-            }
+        if reduceMotion {
+            content
+        } else {
+            content
+                .opacity(isVisible ? 1 : 0)
+                .scaleEffect(isVisible ? 1 : 0.8)
+                .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(delay), value: isVisible)
+                .onAppear {
+                    isVisible = true
+                }
+        }
     }
 }
 
@@ -56,12 +61,13 @@ struct AppearAnimationModifier: ViewModifier {
 struct DockMagnificationModifier: ViewModifier {
     @AppStorage(Config.Storage.dockMagnificationKey) private var enabled = true
     @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     
     private let scale: CGFloat = 1.08
     
     func body(content: Content) -> some View {
         content
-            .scaleEffect((enabled && isHovered) ? scale : 1)
+            .scaleEffect((enabled && !reduceMotion && isHovered) ? scale : 1)
             .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isHovered)
             .onHover { isHovered = $0 }
     }
@@ -71,16 +77,21 @@ struct DockMagnificationModifier: ViewModifier {
 
 struct BounceModifier: ViewModifier {
     @State private var isPressed = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     
     func body(content: Content) -> some View {
-        content
-            .scaleEffect(isPressed ? 0.95 : 1)
-            .animation(.spring(response: 0.2, dampingFraction: 0.5), value: isPressed)
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in isPressed = true }
-                    .onEnded { _ in isPressed = false }
-            )
+        if reduceMotion {
+            content
+        } else {
+            content
+                .scaleEffect(isPressed ? 0.95 : 1)
+                .animation(.spring(response: 0.2, dampingFraction: 0.5), value: isPressed)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { _ in isPressed = true }
+                        .onEnded { _ in isPressed = false }
+                )
+        }
     }
 }
 
@@ -101,15 +112,20 @@ struct SlideInModifier: ViewModifier {
     let edge: Edge
     let delay: Double
     @State private var isVisible = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     
     func body(content: Content) -> some View {
-        content
-            .opacity(isVisible ? 1 : 0)
-            .offset(offset)
-            .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(delay), value: isVisible)
-            .onAppear {
-                isVisible = true
-            }
+        if reduceMotion {
+            content
+        } else {
+            content
+                .opacity(isVisible ? 1 : 0)
+                .offset(offset)
+                .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(delay), value: isVisible)
+                .onAppear {
+                    isVisible = true
+                }
+        }
     }
     
     private var offset: CGSize {
@@ -128,21 +144,26 @@ struct SlideInModifier: ViewModifier {
 struct PulseModifier: ViewModifier {
     let isActive: Bool
     @State private var scale: CGFloat = 1
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     
     func body(content: Content) -> some View {
-        content
-            .scaleEffect(scale)
-            .onChange(of: isActive) { _, newValue in
-                if newValue {
-                    withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
-                        scale = 1.1
-                    }
-                } else {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        scale = 1
+        if reduceMotion {
+            content
+        } else {
+            content
+                .scaleEffect(scale)
+                .onChange(of: isActive) { _, newValue in
+                    if newValue {
+                        withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+                            scale = 1.1
+                        }
+                    } else {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            scale = 1
+                        }
                     }
                 }
-            }
+        }
     }
 }
 
@@ -275,4 +296,21 @@ func triggerHaptic(_ type: HapticType) {
         UISelectionFeedbackGenerator().selectionChanged()
     }
     #endif
+}
+
+// MARK: - Dynamic Type Support
+
+extension Font {
+    /// Scalable font that respects Dynamic Type, with a base design size and text style for scaling.
+    /// Use instead of `.system(size:)` for user-facing content that should scale.
+    static func scalable(_ style: TextStyle, size: CGFloat, weight: Weight = .regular, design: Design = .default) -> Font {
+        .system(size: size, weight: weight, design: design).leading(.standard)
+    }
+}
+
+extension View {
+    /// Enables Dynamic Type scaling on a view. Ensures text respects the user's preferred content size.
+    func dynamicTypeSize(range: ClosedRange<DynamicTypeSize> = .xSmall...DynamicTypeSize.accessibility3) -> some View {
+        self.dynamicTypeSize(range)
+    }
 }

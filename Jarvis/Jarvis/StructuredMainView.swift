@@ -27,6 +27,22 @@ struct StructuredMainView: View {
     @State private var searchQuery = ""
     @State private var completedDropHighlighted = false
     @State private var showMessengerShare = false
+    @State private var showMonthCalendar = false
+    @State private var showAIFullChat = false
+    
+    // App Mode (Work / Personal)
+    @AppStorage("jarvis_app_mode") private var appModeRaw: String = AppMode.work.rawValue
+    @StateObject private var wellness = WellnessStore()
+    
+    private var appMode: AppMode {
+        get { AppMode(rawValue: appModeRaw) ?? .work }
+    }
+    private var appModeBinding: Binding<AppMode> {
+        Binding(
+            get: { AppMode(rawValue: appModeRaw) ?? .work },
+            set: { appModeRaw = $0.rawValue }
+        )
+    }
     
     // Размеры колонок (только iPad/Mac) — сохраняются между запусками
     @AppStorage("jarvis_sidebar_width") private var sidebarWidth: Double = 200
@@ -54,10 +70,16 @@ struct StructuredMainView: View {
             if isCompact {
                 iPhoneLayout
             } else {
-                threeColumnLayout
+                threeColumnWithAIBar
             }
             #endif
         }
+        #if os(macOS)
+        .frame(minWidth: 900, minHeight: 600)
+        #endif
+        #if !os(watchOS)
+        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+        #endif
         .sheet(isPresented: $showAddTask) {
             AddTaskSheet(date: selectedDate, theme: theme)
         }
@@ -103,6 +125,9 @@ struct StructuredMainView: View {
                 deepLinkManager.clearPendingAddTask()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
+            withAnimation(.easeInOut(duration: 0.2)) { leftPanelHidden.toggle() }
+        }
         #endif
     }
     
@@ -114,7 +139,7 @@ struct StructuredMainView: View {
             List {
                 let todayTasks = store.tasksForDay(Date())
                 if todayTasks.isEmpty {
-                    Text("Нет задач")
+                    Text(L10n.noTasks)
                         .foregroundColor(.secondary)
                 } else {
                     ForEach(todayTasks) { task in
@@ -156,14 +181,14 @@ struct StructuredMainView: View {
             .buttonStyle(.plain)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(task.title)\(task.isCompleted ? ", выполнена" : "")")
-        .accessibilityHint("Смахните для удаления")
+        .accessibilityLabel("\(task.title)\(task.isCompleted ? ", \(L10n.completed)" : "")")
+        .accessibilityHint(L10n.swipeToDelete)
         .swipeActions(edge: .trailing) {
             Button(role: .destructive) {
                 dependencies.calendarSyncService.removeEvent(for: task)
                 store.delete(task)
             } label: {
-                Label("Удалить", systemImage: "trash")
+                Label(L10n.deleteTask, systemImage: "trash")
             }
         }
     }
@@ -173,36 +198,96 @@ struct StructuredMainView: View {
     
     #if !os(watchOS)
     private var iPhoneLayout: some View {
-        TabView(selection: $selectedTab) {
-            todayTab
-                .tabItem { Label("Сегодня", systemImage: "calendar") }
-                .tag(0)
+        VStack(spacing: 0) {
+            // Mode toggle at top
+            iPhoneModeToggle
             
-            inboxTab
-                .tabItem { Label("Inbox", systemImage: "tray.fill") }
-                .tag(1)
+            TabView(selection: $selectedTab) {
+                if appMode == .work {
+                    todayTab
+                        .tabItem { Label(L10n.tabToday, systemImage: "calendar") }
+                        .tag(0)
+                    
+                    inboxTab
+                        .tabItem { Label(L10n.tabInbox, systemImage: "tray.fill") }
+                        .tag(1)
+                    
+                    calendarTab
+                        .tabItem { Label(L10n.tabCalendar, systemImage: "calendar.circle") }
+                        .tag(2)
+                    
+                    mailTab
+                        .tabItem { Label(L10n.tabMail, systemImage: "envelope.fill") }
+                        .tag(3)
+                    
+                    neuralTab
+                        .tabItem { Label(L10n.tabAI, systemImage: "brain.head.profile") }
+                        .tag(4)
+                    
+                    analyticsTab
+                        .tabItem { Label(L10n.tabAnalytics, systemImage: "chart.bar.xaxis") }
+                        .tag(5)
+                    
+                    settingsTab
+                        .tabItem { Label(L10n.tabSettings, systemImage: "gearshape.fill") }
+                        .tag(6)
+                } else {
+                    // Personal mode
+                    todayTab
+                        .tabItem { Label(L10n.tabToday, systemImage: "calendar") }
+                        .tag(0)
+                    
+                    healthTab
+                        .tabItem { Label(L10n.healthTitle, systemImage: "heart.text.square.fill") }
+                        .tag(10)
+                    
+                    calendarTab
+                        .tabItem { Label(L10n.tabCalendar, systemImage: "calendar.circle") }
+                        .tag(2)
+                    
+                    settingsTab
+                        .tabItem { Label(L10n.tabSettings, systemImage: "gearshape.fill") }
+                        .tag(6)
+                }
+            }
+            .tint(appMode.color)
             
-            calendarTab
-                .tabItem { Label("Календарь", systemImage: "calendar.circle") }
-                .tag(2)
-            
-            mailTab
-                .tabItem { Label("Почта", systemImage: "envelope.fill") }
-                .tag(3)
-            
-            neuralTab
-                .tabItem { Label("AI", systemImage: "brain.head.profile") }
-                .tag(4)
-            
-            analyticsTab
-                .tabItem { Label("Аналитика", systemImage: "chart.bar.xaxis") }
-                .tag(5)
-            
-            settingsTab
-                .tabItem { Label("Настройки", systemImage: "gearshape.fill") }
-                .tag(6)
+            // Inline AI Command Bar — under tabs, above tab bar
+            AICommandBar(aiManager: dependencies.aiManager)
         }
-        .tint(JarvisTheme.accent)
+    }
+    
+    private var iPhoneModeToggle: some View {
+        HStack(spacing: 0) {
+            ForEach(AppMode.allCases) { mode in
+                Button(action: {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                        appModeRaw = mode.rawValue
+                        selectedTab = 0
+                    }
+                }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: mode.icon)
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(mode.rawValue)
+                            .font(.system(size: 12, weight: appMode == mode ? .bold : .medium))
+                    }
+                    .foregroundColor(appMode == mode ? .white : JarvisTheme.textSecondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(
+                        Capsule()
+                            .fill(appMode == mode ? mode.color : Color.clear)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(Capsule().fill(JarvisTheme.cardBackground))
+        .padding(.horizontal, 16)
+        .padding(.top, 6)
+        .padding(.bottom, 2)
     }
     
     // MARK: - Three Column Layout (iPad/Mac) — колонки меняют размер, левую можно скрыть
@@ -213,6 +298,7 @@ struct StructuredMainView: View {
                 SidebarView(
                     theme: theme,
                     selectedSection: $selectedSection,
+                    appMode: appModeBinding,
                     store: store,
                     onHide: { withAnimation(.easeInOut(duration: 0.2)) { leftPanelHidden = true } },
                     onShowSleepCalculator: { showSleepCalculator = true },
@@ -220,6 +306,7 @@ struct StructuredMainView: View {
                     onShowProfile: { showProfile = true }
                 )
                 .frame(width: Swift.max(160, Swift.min(400, sidebarWidth)))
+                .layoutPriority(1)
                 ColumnResizer(
                     theme: theme,
                     width: $sidebarWidth,
@@ -254,6 +341,11 @@ struct StructuredMainView: View {
                 ChartAnalyticsView(aiManager: dependencies.aiManager)
                     .frame(maxWidth: .infinity)
                 #endif
+            } else if selectedSection == .health {
+                #if !os(watchOS)
+                WellnessView(store: store, wellness: wellness, aiManager: dependencies.aiManager)
+                    .frame(maxWidth: .infinity)
+                #endif
             } else if selectedSection == .projects {
                 #if !os(watchOS)
                 ProjectsView()
@@ -275,6 +367,7 @@ struct StructuredMainView: View {
                     onEditTask: { editingTask = $0 },
                     onToggleTask: { toggleTask($0) }
                 )
+                .frame(minWidth: 320)
             }
         }
         .background(theme.background)
@@ -288,9 +381,19 @@ struct StructuredMainView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Показать боковую панель")
+                .accessibilityLabel(L10n.showSidebar)
                 .padding(.leading, 8)
             }
+        }
+    }
+    
+    // MARK: - Three Column + AI Bar (iPad/Mac)
+    
+    private var threeColumnWithAIBar: some View {
+        VStack(spacing: 0) {
+            threeColumnLayout
+            // Inline AI Command Bar — bottom of window, not overlay
+            AICommandBar(aiManager: dependencies.aiManager)
         }
     }
     
@@ -302,16 +405,34 @@ struct StructuredMainView: View {
         let min: CGFloat
         let max: CGFloat
         @State private var dragStartWidth: CGFloat?
+        @State private var isHovered = false
 
-        private let gripWidth: CGFloat = 10
+        private let visibleWidth: CGFloat = 4
+        private let hitAreaWidth: CGFloat = 14
 
         var body: some View {
-            Rectangle()
-                .fill(theme.divider.opacity(0.5))
-                .frame(width: gripWidth)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture()
+            ZStack {
+                Color.clear.frame(width: hitAreaWidth)
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(isHovered ? theme.divider : theme.divider.opacity(0.4))
+                    .frame(width: visibleWidth)
+                    .animation(.easeInOut(duration: 0.15), value: isHovered)
+            }
+            .frame(width: hitAreaWidth)
+            .contentShape(Rectangle())
+            .onHover { isHovered = $0 }
+            #if os(macOS)
+            .onContinuousHover { phase in
+                switch phase {
+                case .active:
+                    NSCursor.resizeLeftRight.push()
+                case .ended:
+                    NSCursor.pop()
+                }
+            }
+            #endif
+            .gesture(
+                    DragGesture(minimumDistance: 2)
                         .onChanged { value in
                             if dragStartWidth == nil { dragStartWidth = CGFloat(width) }
                             let base = dragStartWidth ?? CGFloat(width)
@@ -351,7 +472,7 @@ struct StructuredMainView: View {
                 }
                 .buttonStyle(.plain)
                 .bounceOnTap()
-                .accessibilityLabel("Добавить задачу")
+                .accessibilityLabel(L10n.addTask)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 16)
@@ -362,15 +483,17 @@ struct StructuredMainView: View {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(theme.textTertiary)
-                TextField("Поиск по задачам", text: $searchQuery)
+                TextField(L10n.searchTasks, text: $searchQuery)
                     .textFieldStyle(.plain)
+                    .accessibilityLabel(L10n.searchTasks)
+                    .accessibilityHint(L10n.searchHint)
                 if !searchQuery.isEmpty {
                     Button(action: { searchQuery = "" }) {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundColor(theme.textTertiary)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Очистить поиск")
+                    .accessibilityLabel(L10n.clearSearch)
                 }
             }
             .padding(10)
@@ -407,7 +530,7 @@ struct StructuredMainView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "plus")
                         .font(.system(size: 14, weight: .semibold))
-                    Text("Добавить")
+                    Text(L10n.addButton)
                         .font(.system(size: 14, weight: .medium))
                 }
                 .foregroundColor(.white)
@@ -448,11 +571,13 @@ struct StructuredMainView: View {
         case .messengers:
             return "WhatsApp & Telegram"
         case .analytics:
-            return "Графики и тренды"
+            return L10n.chartsTrends
+        case .health:
+            return L10n.subtitleWellness
         case .projects:
-            return "Группировка задач"
+            return L10n.subtitleProjects
         case .chat:
-            return "Чат с нейросетью"
+            return L10n.chatWithAI
         }
     }
     
@@ -461,7 +586,7 @@ struct StructuredMainView: View {
         let startOfTomorrow = calendar.startOfDay(for: calendar.date(byAdding: .day, value: 1, to: Date()) ?? Date())
         switch selectedSection {
         case .inbox:
-            return store.tasks.filter { $0.isInbox && !$0.isCompleted }
+            return store.inboxTasks.filter { !$0.isCompleted }
         case .today:
             return store.tasksForDay(Date()).filter { !$0.isCompleted }
         case .scheduled:
@@ -469,10 +594,10 @@ struct StructuredMainView: View {
         case .futurePlans:
             return store.tasks.filter { !$0.isInbox && !$0.isCompleted && $0.date >= startOfTomorrow }.sorted { $0.date < $1.date }
         case .completed:
-            return store.tasks.filter { $0.isCompleted }.sorted { $0.date > $1.date }
+            return store.completedTasks
         case .all:
             return store.tasks.sorted { $0.date < $1.date }
-        case .calendarSection, .mailSection, .messengers, .analytics, .projects, .chat:
+        case .calendarSection, .mailSection, .messengers, .analytics, .projects, .chat, .health:
             return []
         }
     }
@@ -503,16 +628,17 @@ struct StructuredMainView: View {
     
     private var emptyStateText: String {
         switch selectedSection {
-        case .inbox: return "Inbox пуст\nЗаписывайте идеи сюда"
-        case .today: return "Нет задач на сегодня"
-        case .scheduled: return "Нет запланированных задач"
-        case .futurePlans: return "Нет планов на будущее\nПеретащите сюда задачу"
-        case .completed: return "Нет выполненных задач"
-        case .all: return "Нет задач"
-        case .calendarSection: return "Календарь"
-        case .mailSection: return "Почта"
+        case .inbox: return L10n.inboxEmpty
+        case .today: return L10n.noTasksToday
+        case .scheduled: return L10n.noScheduled
+        case .futurePlans: return L10n.noFuturePlans
+        case .completed: return L10n.noCompleted
+        case .all: return L10n.noTasks
+        case .calendarSection: return L10n.calendarSectionLabel
+        case .mailSection: return L10n.mailSectionLabel
         case .messengers: return ""
         case .analytics: return ""
+        case .health: return ""
         case .projects: return ""
         case .chat: return ""
         }
@@ -539,7 +665,8 @@ struct StructuredMainView: View {
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(task.isCompleted ? theme.textTertiary : task.taskColor)
                         .strikethrough(task.isCompleted)
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.85)
                     
                     if !task.isInbox && !task.isAllDay {
                         Text(task.date.formatted(date: .abbreviated, time: .shortened))
@@ -557,7 +684,7 @@ struct StructuredMainView: View {
                             .foregroundColor(JarvisTheme.accentOrange)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Запланировать на сегодня")
+                    .accessibilityLabel(L10n.scheduleToday)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -577,7 +704,7 @@ struct StructuredMainView: View {
             }
             .frame(minWidth: 44, minHeight: 44)
             .contentShape(Rectangle())
-            .accessibilityLabel(task.isCompleted ? "Отменить выполнение \(task.title)" : "Выполнить \(task.title)")
+            .accessibilityLabel(task.isCompleted ? "\(L10n.markIncomplete) \(task.title)" : "\(L10n.markComplete) \(task.title)")
             .accessibilityAddTraits(.isButton)
             .highPriorityGesture(
                 TapGesture().onEnded { _ in toggleTask(task) }
@@ -591,7 +718,7 @@ struct StructuredMainView: View {
         )
         .contentShape(Rectangle())
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Задача: \(task.title)")
+        .accessibilityLabel("\(L10n.addTask): \(task.title)")
         .dockMagnificationEffect()
         .contextMenu { taskContextMenu(task) }
         .draggable(task.id.uuidString) {
@@ -612,6 +739,7 @@ struct StructuredMainView: View {
             ZStack(alignment: .bottomTrailing) {
                 ScrollView {
                     VStack(spacing: 0) {
+                        AIWelcomeHeader()
                         dateHeader
                         weekStrip
                         completedDropZone
@@ -620,7 +748,20 @@ struct StructuredMainView: View {
                 }
                 .background(theme.background)
                 
-                floatingAddButton
+                floatingDualFAB
+                
+                // Monthly calendar overlay popup
+                if showMonthCalendar {
+                    Color.black.opacity(0.25)
+                        .ignoresSafeArea()
+                        .onTapGesture { withAnimation(.spring(response: 0.3)) { showMonthCalendar = false } }
+                    
+                    VStack(spacing: 0) {
+                        Spacer()
+                        monthCalendarPopup
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                }
             }
             .navigationTitle("Jarvis")
             #if os(iOS)
@@ -643,7 +784,7 @@ struct StructuredMainView: View {
             ZStack(alignment: .bottomTrailing) {
                 ScrollView {
                     LazyVStack(spacing: 8) {
-                        let inboxTasks = store.tasks.filter { $0.isInbox && !$0.isCompleted }
+                        let inboxTasks = store.inboxTasks.filter { !$0.isCompleted }
                         
                         if inboxTasks.isEmpty {
                             emptyInboxView
@@ -673,8 +814,7 @@ struct StructuredMainView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 8) {
-                    let completedTasks = store.tasks.filter { $0.isCompleted }
-                        .sorted { $0.date > $1.date }
+                    let completedTasks = store.completedTasks
                     
                     if completedTasks.isEmpty {
                         emptyCompletedView
@@ -687,7 +827,7 @@ struct StructuredMainView: View {
                         }
                     }
                 }
-                .animation(.spring(response: 0.45, dampingFraction: 0.75), value: store.tasks.filter { $0.isCompleted }.map(\.id))
+                .animation(.spring(response: 0.45, dampingFraction: 0.75), value: store.completedTasks.map(\.id))
                 .padding(.horizontal, 16)
                 .padding(.top, 16)
             }
@@ -697,14 +837,14 @@ struct StructuredMainView: View {
                 moveTask(taskID: uuid, to: .completed)
                 return true
             } isTargeted: { _ in }
-            .navigationTitle("Выполнено")
+            .navigationTitle(L10n.completedTitle)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
             #endif
             .toolbar {
-                if !store.tasks.filter({ $0.isCompleted }).isEmpty {
+                if !store.completedTasks.isEmpty {
                     ToolbarItem(placement: .automatic) {
-                        Button("Очистить") {
+                        Button(L10n.clearAction) {
                             store.removeCompleted()
                         }
                         .foregroundColor(JarvisTheme.accent)
@@ -715,7 +855,7 @@ struct StructuredMainView: View {
     }
     
     private var completedStatsCard: some View {
-        let completed = store.tasks.filter { $0.isCompleted }
+        let completed = store.completedTasks
         let todayCompleted = completed.filter { Calendar.current.isDateInToday($0.date) }.count
         let weekCompleted = completed.filter {
             guard let weekAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date()) else { return false }
@@ -724,9 +864,9 @@ struct StructuredMainView: View {
         
         return VStack(spacing: 16) {
             HStack(spacing: 20) {
-                statItem(value: "\(completed.count)", label: "Всего", color: JarvisTheme.accent)
-                statItem(value: "\(todayCompleted)", label: "Сегодня", color: JarvisTheme.accentGreen)
-                statItem(value: "\(weekCompleted)", label: "За неделю", color: JarvisTheme.accentBlue)
+                statItem(value: "\(completed.count)", label: L10n.total, color: JarvisTheme.accent)
+                statItem(value: "\(todayCompleted)", label: L10n.tabToday, color: JarvisTheme.accentGreen)
+                statItem(value: "\(weekCompleted)", label: L10n.thisWeek, color: JarvisTheme.accentBlue)
             }
         }
         .padding()
@@ -780,7 +920,7 @@ struct StructuredMainView: View {
                     .foregroundColor(theme.textSecondary)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Восстановить задачу")
+            .accessibilityLabel(L10n.restoreTask)
         }
         .padding(12)
         .background(
@@ -796,10 +936,10 @@ struct StructuredMainView: View {
             Image(systemName: "checkmark.circle")
                 .font(.system(size: 60))
                 .foregroundColor(theme.textTertiary)
-            Text("Нет выполненных задач")
+            Text(L10n.noCompleted)
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundColor(theme.textPrimary)
-            Text("Выполненные задачи\nпоявятся здесь")
+            Text(L10n.completedAppearHere)
                 .font(.system(size: 14))
                 .foregroundColor(theme.textSecondary)
                 .multilineTextAlignment(.center)
@@ -816,7 +956,7 @@ struct StructuredMainView: View {
             CalendarView()
         }
         #else
-        Text("Недоступно на watchOS")
+        Text(L10n.unavailableWatchOS)
         #endif
     }
     
@@ -828,7 +968,7 @@ struct StructuredMainView: View {
             MailView()
         }
         #else
-        Text("Недоступно на watchOS")
+        Text(L10n.unavailableWatchOS)
         #endif
     }
     
@@ -846,12 +986,18 @@ struct StructuredMainView: View {
         ChartAnalyticsView(aiManager: dependencies.aiManager)
     }
     
+    // MARK: - Health Tab (iPhone)
+    
+    private var healthTab: some View {
+        WellnessView(store: store, wellness: wellness, aiManager: dependencies.aiManager)
+    }
+    
     // MARK: - Settings Tab (iPhone)
     
     private var settingsTab: some View {
         NavigationStack {
             SettingsContent(theme: theme, showSleepCalculator: $showSleepCalculator)
-                .navigationTitle("Настройки")
+                .navigationTitle(L10n.tabSettings)
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.large)
                 #endif
@@ -879,13 +1025,13 @@ struct StructuredMainView: View {
         Button {
             editingTask = task
         } label: {
-            Label("Редактировать", systemImage: "pencil")
+            Label(L10n.editTask, systemImage: "pencil")
         }
         
         Button {
             toggleTask(task)
         } label: {
-            Label(task.isCompleted ? "Отменить выполнение" : "Выполнить", 
+            Label(task.isCompleted ? L10n.markIncomplete : L10n.markComplete, 
                   systemImage: task.isCompleted ? "arrow.uturn.backward" : "checkmark.circle")
         }
         
@@ -894,32 +1040,32 @@ struct StructuredMainView: View {
         Button {
             duplicateTask(task)
         } label: {
-            Label("Дублировать", systemImage: "doc.on.doc")
+            Label(L10n.duplicateTask, systemImage: "doc.on.doc")
         }
         
         if !task.isInbox {
             Button {
                 moveToInbox(task)
             } label: {
-                Label("В Inbox", systemImage: "tray")
+                Label(L10n.moveToInbox, systemImage: "tray")
             }
         }
         
         Button {
             scheduleForTomorrow(task)
         } label: {
-            Label("На завтра", systemImage: "calendar.badge.plus")
+            Label(L10n.moveToTomorrow, systemImage: "calendar.badge.plus")
         }
         
         Button {
             moveTaskToFuturePlans(task)
         } label: {
-            Label("В планы на будущее", systemImage: "sparkles")
+            Label(L10n.moveToFuture, systemImage: "sparkles")
         }
         
         Divider()
         
-        Menu("Цвет") {
+        Menu(L10n.colorMenu) {
             ForEach(0..<JarvisTheme.taskColors.count, id: \.self) { index in
                 Button {
                     changeTaskColor(task, to: index)
@@ -932,7 +1078,7 @@ struct StructuredMainView: View {
         Divider()
         
         #if !os(watchOS)
-        Menu("Поделиться") {
+        Menu(L10n.share) {
             Button {
                 MessengerService.shared.shareTask(task, via: .whatsapp)
             } label: {
@@ -952,12 +1098,12 @@ struct StructuredMainView: View {
             dependencies.calendarSyncService.removeEvent(for: task)
             store.delete(task)
         } label: {
-            Label("Удалить", systemImage: "trash")
+            Label(L10n.deleteTask, systemImage: "trash")
         }
     }
     
     private func colorName(_ index: Int) -> String {
-        let names = ["Коралловый", "Оранжевый", "Жёлтый", "Зелёный", "Синий", "Фиолетовый", "Розовый", "Бирюзовый"]
+        let names = [L10n.colorCoral, L10n.colorOrange, L10n.colorYellow, L10n.colorGreen, L10n.colorBlue, L10n.colorPurple, L10n.colorPink, L10n.colorTurquoise]
         return names[index % names.count]
     }
     
@@ -965,14 +1111,24 @@ struct StructuredMainView: View {
     
     private var dateHeader: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(selectedDate.formatted(.dateTime.weekday(.wide)))
-                    .font(.system(size: 14))
-                    .foregroundColor(theme.textSecondary)
-                Text(selectedDate.formatted(.dateTime.day().month(.wide)))
-                    .font(.system(size: 24, weight: .bold))
-                    .foregroundColor(theme.textPrimary)
+            Button(action: {
+                withAnimation(.spring(response: 0.3)) { showMonthCalendar.toggle() }
+            }) {
+                HStack(spacing: 4) {
+                    Text("\(selectedDate.formatted(.dateTime.day())) \(selectedDate.formatted(.dateTime.month(.wide)))")
+                        .font(.system(size: 26, weight: .bold))
+                        .foregroundColor(theme.textPrimary)
+                    Text(selectedDate.formatted(.dateTime.year()))
+                        .font(.system(size: 26, weight: .bold))
+                        .foregroundColor(JarvisTheme.accent)
+                    
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(JarvisTheme.accent)
+                        .rotationEffect(.degrees(showMonthCalendar ? 90 : 0))
+                }
             }
+            .buttonStyle(.plain)
             
             Spacer()
             
@@ -993,10 +1149,10 @@ struct StructuredMainView: View {
                     .background(Circle().fill(theme.cardBackground))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Предыдущий день")
+            .accessibilityLabel(L10n.previousDay)
             
             Button(action: { selectedDate = Date() }) {
-                Text("Сегодня")
+                Text(L10n.today)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(JarvisTheme.accent)
                     .padding(.horizontal, 12)
@@ -1013,7 +1169,7 @@ struct StructuredMainView: View {
                     .background(Circle().fill(theme.cardBackground))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Следующий день")
+            .accessibilityLabel(L10n.nextDay)
         }
     }
     
@@ -1084,7 +1240,7 @@ struct StructuredMainView: View {
             Image(systemName: "checkmark.circle")
                 .font(.system(size: 14))
                 .foregroundColor(JarvisTheme.accentGreen)
-            Text("Перетащите сюда — в Выполнено")
+            Text(L10n.dropToComplete)
                 .font(.system(size: 13))
                 .foregroundColor(theme.textSecondary)
         }
@@ -1109,56 +1265,279 @@ struct StructuredMainView: View {
         let dayTasks = store.tasksForDay(selectedDate).filter { !$0.isInbox && !$0.isCompleted }
         let sortedTasks = dayTasks.sorted { $0.date < $1.date }
         
-        // Group tasks by hour for structured display with drop zones
-        let cal = Calendar.current
-        let tasksByHour = Dictionary(grouping: sortedTasks) { cal.component(.hour, from: $0.date) }
-        
-        // Determine visible hours: from earliest task hour (or 6) to latest (or 22)
-        let earliestHour = sortedTasks.first.map { cal.component(.hour, from: $0.date) } ?? 6
-        let latestHour = sortedTasks.last.map { cal.component(.hour, from: $0.date) } ?? 22
-        let startHour = max(0, min(earliestHour, 6))
-        let endHour = min(24, max(latestHour + 2, 22))
-        
         return VStack(alignment: .leading, spacing: 0) {
             if sortedTasks.isEmpty {
                 emptyTimelineView
             } else {
-                ForEach(startHour..<endHour, id: \.self) { hour in
-                    let hourTasks = tasksByHour[hour] ?? []
-
-                    // Hour header + drop zone
-                    HStack(spacing: 8) {
-                        Text(String(format: "%02d:00", hour))
-                            .font(.caption.weight(.medium).monospacedDigit())
-                            .foregroundColor(theme.textTertiary)
-                            .frame(width: 40, alignment: .trailing)
-                        
-                        Rectangle()
-                            .fill(theme.textTertiary.opacity(0.15))
-                            .frame(height: 1)
-                            .frame(maxWidth: .infinity)
-                    }
-                    .padding(.top, hourTasks.isEmpty ? 4 : 8)
-                    .contentShape(Rectangle())
-                    .dropDestination(for: String.self) { items, _ in
-                        guard let taskID = items.first, let uuid = UUID(uuidString: taskID) else { return false }
-                        withAnimation(.easeOut(duration: 0.25)) {
-                            moveTaskToDateAndTime(taskID: uuid, date: selectedDate, hour: hour, minute: 0)
-                        }
-                        return true
-                    }
-                    
-                    // Tasks at this hour
-                    ForEach(hourTasks) { task in
-                        draggableTaskRow(task)
-                            .transition(.taskRowTransition)
-                    }
-                }
+                structuredTimeline(tasks: sortedTasks)
             }
         }
         .animation(.spring(response: 0.45, dampingFraction: 0.75), value: sortedTasks.map(\.id))
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 12)
         .padding(.top, 8)
+    }
+    
+    // MARK: - Structured Timeline (proportional blocks + dashed line)
+    
+    private func structuredTimeline(tasks: [PlannerTask]) -> some View {
+        let cal = Calendar.current
+        let hrH: CGFloat = 80
+        let isToday = cal.isDateInToday(selectedDate)
+        
+        let firstMinutes = taskMinutesOfDay(tasks.first!.date)
+        let lastTask = tasks.last!
+        let lastEnd = taskMinutesOfDay(lastTask.date) + CGFloat(max(lastTask.durationMinutes, 30))
+        let totalHeight = (lastEnd / 60.0) * hrH + 60
+        
+        return ZStack(alignment: .topLeading) {
+            // Dashed vertical timeline line
+            timelineDashedLine(startMinutes: firstMinutes, endMinutes: lastEnd, hourRowHeight: hrH)
+            
+            // Now indicator
+            if isToday {
+                timelineNowIndicator(hourRowHeight: hrH)
+            }
+            
+            // Task blocks
+            ForEach(Array(tasks.enumerated()), id: \.element.id) { index, task in
+                timelineTaskGroup(task: task, index: index, allTasks: tasks, hourRowHeight: hrH)
+            }
+        }
+        .frame(height: totalHeight)
+    }
+    
+    private func taskMinutesOfDay(_ date: Date) -> CGFloat {
+        let cal = Calendar.current
+        return CGFloat(cal.component(.hour, from: date)) * 60 + CGFloat(cal.component(.minute, from: date))
+    }
+    
+    private func timelineDashedLine(startMinutes: CGFloat, endMinutes: CGFloat, hourRowHeight: CGFloat) -> some View {
+        let startY = (startMinutes / 60.0) * hourRowHeight + 20
+        let endY = (endMinutes / 60.0) * hourRowHeight + 20
+        return Path { path in
+            let x: CGFloat = 36
+            var y = startY
+            while y < endY {
+                path.move(to: CGPoint(x: x, y: y))
+                path.addLine(to: CGPoint(x: x, y: min(y + 6, endY)))
+                y += 12
+            }
+        }
+        .stroke(theme.textTertiary.opacity(0.4), lineWidth: 2)
+    }
+    
+    private func timelineNowIndicator(hourRowHeight: CGFloat) -> some View {
+        let cal = Calendar.current
+        let h = cal.component(.hour, from: Date())
+        let m = cal.component(.minute, from: Date())
+        let nowY = (CGFloat(h) + CGFloat(m) / 60.0) * hourRowHeight + 20
+        return HStack(spacing: 0) {
+            Text(String(format: "%02d:%02d", h, m))
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .foregroundColor(JarvisTheme.accent)
+                .frame(width: 36, alignment: .trailing)
+            Circle()
+                .fill(JarvisTheme.accent)
+                .frame(width: 10, height: 10)
+                .offset(x: -5)
+            Rectangle()
+                .fill(JarvisTheme.accent)
+                .frame(height: 2)
+        }
+        .offset(y: nowY - 7)
+        .zIndex(50)
+    }
+    
+    @ViewBuilder
+    private func timelineTaskGroup(task: PlannerTask, index: Int, allTasks: [PlannerTask], hourRowHeight: CGFloat) -> some View {
+        let mins = taskMinutesOfDay(task.date)
+        let taskY = (mins / 60.0) * hourRowHeight + 20
+        let dur = max(task.durationMinutes, 30)
+        let blockH = CGFloat(dur) / 60.0 * hourRowHeight
+        let endMins = mins + CGFloat(task.durationMinutes)
+        
+        // Time label
+        timeLabel(date: task.date)
+            .offset(y: taskY - 7)
+        
+        // Icon circle
+        taskIconCircle(task: task)
+            .offset(x: 14, y: taskY - 2)
+            .zIndex(10)
+        
+        // Card
+        timelineTaskCard(task: task, blockHeight: blockH)
+            .padding(.leading, 62)
+            .padding(.trailing, 4)
+            .offset(y: taskY)
+        
+        // End time
+        if task.durationMinutes >= 60 {
+            timeLabel(minutesOfDay: Int(endMins))
+                .offset(y: taskY + blockH - 7)
+        }
+        
+        // Gap to next task
+        if index < allTasks.count - 1 {
+            let nextMins = taskMinutesOfDay(allTasks[index + 1].date)
+            let gap = Int(nextMins - endMins)
+            if gap > 5 {
+                timelineGapView(gapMinutes: gap, endMinutes: endMins, hourRowHeight: hourRowHeight)
+            }
+        }
+    }
+    
+    private func timeLabel(date: Date) -> some View {
+        Text(date.formatted(date: .omitted, time: .shortened))
+            .font(.system(size: 12, weight: .medium, design: .monospaced))
+            .foregroundColor(theme.textTertiary)
+            .frame(width: 36, alignment: .trailing)
+    }
+    
+    private func timeLabel(minutesOfDay: Int) -> some View {
+        Text(String(format: "%02d:%02d", minutesOfDay / 60, minutesOfDay % 60))
+            .font(.system(size: 12, weight: .medium, design: .monospaced))
+            .foregroundColor(theme.textTertiary)
+            .frame(width: 36, alignment: .trailing)
+    }
+    
+    private func taskIconCircle(task: PlannerTask) -> some View {
+        ZStack {
+            Circle()
+                .fill(task.taskColor.opacity(0.2))
+                .frame(width: 44, height: 44)
+            Image(systemName: task.icon.isEmpty ? "star.fill" : task.icon)
+                .font(.system(size: 18))
+                .foregroundColor(task.taskColor)
+        }
+    }
+    
+    private func timelineTaskCard(task: PlannerTask, blockHeight: CGFloat) -> some View {
+        let cal = Calendar.current
+        let endTime = cal.date(byAdding: .minute, value: task.durationMinutes, to: task.date) ?? task.date
+        let timeRange = "\(task.date.formatted(date: .omitted, time: .shortened)) – \(endTime.formatted(date: .omitted, time: .shortened)) (\(formatDuration(task.durationMinutes)))"
+        
+        return HStack(spacing: 0) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(task.taskColor)
+                .frame(width: 4)
+            
+            VStack(alignment: .leading, spacing: 3) {
+                Text(timeRange)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.textSecondary)
+                
+                Text(task.title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(theme.textPrimary)
+                    .lineLimit(blockHeight > 60 ? 2 : 1)
+                
+                if !task.notes.isEmpty && blockHeight > 80 {
+                    Text(task.notes)
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.textTertiary)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.leading, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            
+            ZStack {
+                Circle()
+                    .stroke(task.taskColor, lineWidth: 2)
+                    .frame(width: 26, height: 26)
+                if task.isCompleted {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(task.taskColor)
+                }
+            }
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
+            .highPriorityGesture(
+                TapGesture().onEnded { _ in toggleTask(task) }
+            )
+            .padding(.trailing, 8)
+        }
+        .frame(height: max(blockHeight - 6, 50))
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(theme.cardBackground)
+                .shadow(color: theme.cardShadow, radius: 3, y: 1)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { editingTask = task }
+        .contextMenu { taskContextMenu(task) }
+        .draggable(task.id.uuidString) {
+            HStack {
+                Circle().fill(task.taskColor).frame(width: 8, height: 8)
+                Text(task.title).font(.system(size: 14, weight: .medium))
+            }
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 8).fill(theme.cardBackground))
+        }
+    }
+    
+    @ViewBuilder
+    private func timelineGapView(gapMinutes: Int, endMinutes: CGFloat, hourRowHeight: CGFloat) -> some View {
+        let gapY = (endMinutes / 60.0) * hourRowHeight + 20 + (CGFloat(gapMinutes) / 120.0 * hourRowHeight)
+        
+        HStack(spacing: 6) {
+            Image(systemName: "clock")
+                .font(.system(size: 12))
+                .foregroundColor(JarvisTheme.accent.opacity(0.7))
+            Text("\(formatDuration(gapMinutes)): \(gapMessage(gapMinutes))")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(theme.textSecondary)
+        }
+        .padding(.leading, 62)
+        .offset(y: gapY)
+        
+        if gapMinutes >= 15 {
+            Button(action: {
+                addTaskAtTime(hour: Int(endMinutes) / 60, minute: Int(endMinutes) % 60)
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 14))
+                    Text(L10n.addTask)
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .foregroundColor(JarvisTheme.accent)
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, 62)
+            .offset(y: gapY + 22)
+        }
+    }
+    
+    // MARK: - Timeline Helpers
+    
+    private func formatDuration(_ minutes: Int) -> String {
+        if minutes >= 60 {
+            let h = minutes / 60
+            let m = minutes % 60
+            if m == 0 { return "\(h) hr" }
+            return "\(h) hr, \(m) min"
+        }
+        return "\(minutes)m"
+    }
+    
+    private func gapMessage(_ gapMinutes: Int) -> String {
+        if gapMinutes < 10 { return L10n.almostTime }
+        if gapMinutes < 30 { return L10n.quickBreak }
+        if gapMinutes < 60 { return L10n.timeForFocus }
+        if gapMinutes < 120 { return L10n.aCanvasForIdeas }
+        return L10n.plentyOfTime
+    }
+    
+    private func addTaskAtTime(hour: Int, minute: Int) {
+        let cal = Calendar.current
+        let dayStart = cal.startOfDay(for: selectedDate)
+        let taskDate = cal.date(bySettingHour: hour, minute: minute, second: 0, of: dayStart) ?? dayStart
+        // Create a quick task at the specified time — show add sheet with pre-set time
+        self.selectedDate = taskDate
+        self.showAddTask = true
     }
     
     // MARK: - Task Rows
@@ -1185,6 +1564,7 @@ struct StructuredMainView: View {
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(task.isCompleted ? theme.textTertiary : theme.textPrimary)
                         .strikethrough(task.isCompleted)
+                        .lineLimit(2)
                     
                     HStack(spacing: 8) {
                         if !task.isAllDay {
@@ -1244,12 +1624,12 @@ struct StructuredMainView: View {
                 dependencies.calendarSyncService.removeEvent(for: task)
                 store.delete(task)
             } label: {
-                Label("Удалить", systemImage: "trash")
+                Label(L10n.deleteTask, systemImage: "trash")
             }
         }
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             Button { toggleTask(task) } label: {
-                Label(task.isCompleted ? "Отменить" : "Готово", systemImage: task.isCompleted ? "arrow.uturn.backward" : "checkmark")
+                Label(task.isCompleted ? L10n.markIncomplete : L10n.markComplete, systemImage: task.isCompleted ? "arrow.uturn.backward" : "checkmark")
             }
             .tint(JarvisTheme.accentGreen)
         }
@@ -1287,6 +1667,7 @@ struct StructuredMainView: View {
                     Text(task.title)
                         .font(.system(size: 16, weight: .medium))
                         .foregroundColor(theme.textPrimary)
+                        .lineLimit(2)
                     if task.priority != .medium {
                         Image(systemName: task.priority.icon)
                             .font(.system(size: 10))
@@ -1301,7 +1682,7 @@ struct StructuredMainView: View {
                 }
             }
             
-            Spacer()
+            Spacer(minLength: 8)
             
             Button(action: { scheduleTaskToToday(task) }) {
                 Image(systemName: "calendar.badge.plus")
@@ -1309,7 +1690,7 @@ struct StructuredMainView: View {
                     .foregroundColor(JarvisTheme.accent)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Запланировать на сегодня")
+            .accessibilityLabel(L10n.scheduleToday)
         }
         .padding(12)
         .background(
@@ -1326,12 +1707,12 @@ struct StructuredMainView: View {
                 dependencies.calendarSyncService.removeEvent(for: task)
                 store.delete(task)
             } label: {
-                Label("Удалить", systemImage: "trash")
+                Label(L10n.deleteTask, systemImage: "trash")
             }
         }
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             Button { scheduleTaskToToday(task) } label: {
-                Label("Запланировать", systemImage: "calendar")
+                Label(L10n.scheduleAction, systemImage: "calendar")
             }
             .tint(JarvisTheme.accentBlue)
         }
@@ -1340,36 +1721,221 @@ struct StructuredMainView: View {
     // MARK: - Empty States
     
     private var emptyTimelineView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "calendar.badge.checkmark")
-                .font(.system(size: 50))
-                .foregroundColor(theme.textTertiary)
-            Text("Нет задач на этот день")
-                .font(.system(size: 16))
-                .foregroundColor(theme.textTertiary)
-            Text("Нажмите + или перетащите задачу")
-                .font(.system(size: 14))
-                .foregroundColor(theme.textMuted)
+        VStack(spacing: 20) {
+            Spacer().frame(height: 40)
+            
+            ZStack {
+                Circle()
+                    .fill(JarvisTheme.accent.opacity(0.1))
+                    .frame(width: 100, height: 100)
+                Image(systemName: "sun.max.fill")
+                    .font(.system(size: 44))
+                    .foregroundColor(JarvisTheme.accent.opacity(0.6))
+            }
+            
+            Text(L10n.noTasksThisDay)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundColor(theme.textPrimary)
+            
+            Text(L10n.emptyDayDescription)
+                .font(.system(size: 15))
+                .foregroundColor(theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+            
+            Button(action: { showAddTask = true }) {
+                HStack(spacing: 8) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 18))
+                    Text(L10n.addTask)
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 14)
+                .background(
+                    Capsule()
+                        .fill(JarvisTheme.accent)
+                )
+            }
+            .buttonStyle(.plain)
+            
+            Spacer()
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 80)
     }
     
     private var emptyInboxView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "tray")
-                .font(.system(size: 50))
-                .foregroundColor(JarvisTheme.accent.opacity(0.5))
-            Text("Inbox пуст")
-                .font(.system(size: 18, weight: .semibold))
+        VStack(spacing: 20) {
+            Spacer().frame(height: 40)
+            
+            ZStack {
+                Circle()
+                    .fill(JarvisTheme.accent.opacity(0.1))
+                    .frame(width: 100, height: 100)
+                Image(systemName: "tray.fill")
+                    .font(.system(size: 44))
+                    .foregroundColor(JarvisTheme.accent.opacity(0.6))
+            }
+            
+            Text(L10n.inboxTitle)
+                .font(.system(size: 20, weight: .semibold))
                 .foregroundColor(theme.textPrimary)
-            Text("Записывайте мысли и задачи\nдля планирования позже")
-                .font(.system(size: 14))
+            
+            Text(L10n.inboxEmptyDescription)
+                .font(.system(size: 15))
                 .foregroundColor(theme.textSecondary)
                 .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            
+            Button(action: { showAddTask = true }) {
+                HStack(spacing: 8) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 18))
+                    Text(L10n.newInboxTask)
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 14)
+                .background(
+                    Capsule()
+                        .fill(JarvisTheme.accent)
+                )
+            }
+            .buttonStyle(.plain)
+            
+            Spacer()
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 80)
+    }
+    
+    // MARK: - Month Calendar Popup
+    
+    private var monthCalendarPopup: some View {
+        let cal = Calendar.current
+        let month = cal.component(.month, from: selectedDate)
+        let year = cal.component(.year, from: selectedDate)
+        let firstOfMonth = cal.date(from: DateComponents(year: year, month: month, day: 1))!
+        let daysInMonth = cal.range(of: .day, in: .month, for: firstOfMonth)!.count
+        let firstWeekday = (cal.component(.weekday, from: firstOfMonth) + 5) % 7 // Mon=0
+        let weekDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        
+        return VStack(spacing: 12) {
+            // Header
+            HStack {
+                Text("\(selectedDate.formatted(.dateTime.month(.wide)))")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundColor(theme.textPrimary)
+                Text(selectedDate.formatted(.dateTime.year()))
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundColor(JarvisTheme.accent)
+                
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(JarvisTheme.accent)
+                
+                Spacer()
+                
+                HStack(spacing: 12) {
+                    Button(action: { moveMonth(by: -1) }) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(theme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    
+                    Button(action: { moveMonth(by: 1) }) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(theme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                
+                Button(action: { withAnimation(.spring(response: 0.3)) { showMonthCalendar = false } }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(theme.textSecondary)
+                        .frame(width: 32, height: 32)
+                        .background(Circle().fill(theme.cardBackground))
+                }
+                .buttonStyle(.plain)
+            }
+            
+            // Weekday headers
+            HStack(spacing: 0) {
+                ForEach(weekDays, id: \.self) { day in
+                    Text(day)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.textTertiary)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            
+            // Days grid
+            let totalCells = firstWeekday + daysInMonth
+            let rows = (totalCells + 6) / 7
+            
+            ForEach(0..<rows, id: \.self) { row in
+                HStack(spacing: 0) {
+                    ForEach(0..<7, id: \.self) { col in
+                        let dayIndex = row * 7 + col - firstWeekday + 1
+                        if dayIndex >= 1 && dayIndex <= daysInMonth {
+                            let dayDate = cal.date(from: DateComponents(year: year, month: month, day: dayIndex))!
+                            let isSelected = cal.isDate(dayDate, inSameDayAs: selectedDate)
+                            let isToday = cal.isDateInToday(dayDate)
+                            let taskCount = store.tasksForDay(dayDate).filter { !$0.isInbox && !$0.isCompleted }.count
+                            
+                            Button(action: {
+                                selectedDate = dayDate
+                                withAnimation(.spring(response: 0.3)) { showMonthCalendar = false }
+                            }) {
+                                VStack(spacing: 2) {
+                                    Text("\(dayIndex)")
+                                        .font(.system(size: 16, weight: isSelected || isToday ? .bold : .regular))
+                                        .foregroundColor(isSelected ? .white : (isToday ? JarvisTheme.accent : theme.textPrimary))
+                                        .frame(width: 36, height: 36)
+                                        .background(
+                                            Circle()
+                                                .fill(isSelected ? JarvisTheme.accent : Color.clear)
+                                        )
+                                    
+                                    // Task dots
+                                    HStack(spacing: 2) {
+                                        ForEach(0..<Swift.min(taskCount, 3), id: \.self) { _ in
+                                            Circle()
+                                                .fill(isSelected ? JarvisTheme.accent : JarvisTheme.accent.opacity(0.6))
+                                                .frame(width: 4, height: 4)
+                                        }
+                                    }
+                                    .frame(height: 4)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .frame(maxWidth: .infinity)
+                        } else {
+                            Color.clear.frame(maxWidth: .infinity, minHeight: 42)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(theme.background)
+                .shadow(color: .black.opacity(0.15), radius: 20, y: -5)
+        )
+        .padding(.horizontal, 8)
+    }
+    
+    private func moveMonth(by offset: Int) {
+        if let newDate = Calendar.current.date(byAdding: .month, value: offset, to: selectedDate) {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                selectedDate = newDate
+            }
+        }
     }
     
     private var floatingAddButton: some View {
@@ -1382,9 +1948,62 @@ struct StructuredMainView: View {
                 .shadow(color: JarvisTheme.accent.opacity(0.4), radius: 8, y: 4)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Добавить задачу")
+        .accessibilityLabel(L10n.addTask)
         .padding(.trailing, 20)
         .padding(.bottom, 20)
+    }
+    
+    // MARK: - Dual FAB (Add Task + AI Voice)
+    
+    private var floatingDualFAB: some View {
+        VStack(spacing: 12) {
+            // Secondary: Add Task
+            Button(action: { showAddTask = true }) {
+                Image(systemName: "plus")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(width: 44, height: 44)
+                    .background(Circle().fill(JarvisTheme.accent))
+                    .shadow(color: JarvisTheme.accent.opacity(0.3), radius: 6, y: 3)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(L10n.addTask)
+            
+            // Primary: AI Voice (larger, gradient)
+            Button(action: { showAIFullChat = true }) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [JarvisTheme.accent, JarvisTheme.accentPurple],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 56, height: 56)
+                        .shadow(color: JarvisTheme.accentPurple.opacity(0.4), radius: 8, y: 4)
+                    
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Голосовая команда Jarvis")
+            .accessibilityHint("Нажмите для управления голосом")
+        }
+        .padding(.trailing, 20)
+        .padding(.bottom, 20)
+        .sheet(isPresented: $showAIFullChat) {
+            NavigationStack {
+                AIChatView(aiManager: dependencies.aiManager)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Готово") { showAIFullChat = false }
+                        }
+                    }
+            }
+        }
     }
     
     // MARK: - Actions

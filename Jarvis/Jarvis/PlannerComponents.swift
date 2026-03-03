@@ -81,7 +81,7 @@ struct StructuredDateStrip: View {
             Button {
                 withAnimation { onSelectDay(Date()) }
             } label: {
-                Text("Сегодня")
+                Text(L10n.today)
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(JarvisTheme.accent)
             }
@@ -221,23 +221,7 @@ struct TaskBlockView: View {
                 .fill(color)
                 .frame(width: 4)
             
-            // Checkbox
-            Button(action: onToggle) {
-                ZStack {
-                    Circle()
-                        .strokeBorder(task.isCompleted ? color : JarvisTheme.textTertiary, lineWidth: 2)
-                        .frame(width: 22, height: 22)
-                    
-                    if task.isCompleted {
-                        Circle()
-                            .fill(color)
-                            .frame(width: 14, height: 14)
-                    }
-                }
-            }
-            .buttonStyle(.plain)
-            
-            // Content
+            // Content (tap to edit)
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.title)
                     .font(.subheadline.weight(.medium))
@@ -252,8 +236,9 @@ struct TaskBlockView: View {
                         .lineLimit(1)
                 }
             }
-            
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { onTap() }
             
             // Время начала и длительность
             VStack(alignment: .trailing, spacing: 2) {
@@ -264,6 +249,23 @@ struct TaskBlockView: View {
                     .font(.caption2)
                     .foregroundStyle(JarvisTheme.textTertiary.opacity(0.9))
             }
+            .onTapGesture { onTap() }
+            
+            // Checkbox (right side) — tap toggles completion
+            ZStack {
+                Circle()
+                    .strokeBorder(task.isCompleted ? color : JarvisTheme.textTertiary, lineWidth: 2)
+                    .frame(width: 24, height: 24)
+                
+                if task.isCompleted {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(color)
+                }
+            }
+            .frame(minWidth: 40, minHeight: 40)
+            .contentShape(Rectangle())
+            .onTapGesture { onToggle() }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -274,11 +276,9 @@ struct TaskBlockView: View {
                 .fill(JarvisTheme.cardBackground)
                 .shadow(color: JarvisTheme.cardShadow, radius: 4, x: 0, y: 2)
         )
-        .contentShape(Rectangle())
-        .onTapGesture { onTap() }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(task.title), \(timeText), \(durationText)\(task.isCompleted ? ", выполнена" : "")")
-        .accessibilityHint("Нажмите для редактирования")
+        .accessibilityLabel("\(task.title), \(timeText), \(durationText)\(task.isCompleted ? ", \(L10n.completed)" : "")")
+        .accessibilityHint(L10n.tapToEdit)
         .offset(y: startOffset + 2)
     }
     
@@ -347,7 +347,7 @@ struct AllDayTaskRow: View {
                 .shadow(color: JarvisTheme.cardShadow, radius: 3, x: 0, y: 1)
         )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Задача на весь день: \(task.title)\(task.isCompleted ? ", выполнена" : "")")
+        .accessibilityLabel("\(task.title)\(task.isCompleted ? ", \(L10n.completed)" : "")")
     }
 }
 
@@ -414,11 +414,11 @@ struct InboxTaskRow: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onEdit)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Inbox: \(task.title)\(task.isCompleted ? ", выполнена" : "")")
-        .accessibilityHint("Нажмите для редактирования")
+        .accessibilityLabel("Inbox: \(task.title)\(task.isCompleted ? ", \(L10n.completed)" : "")")
+        .accessibilityHint(L10n.tapToEdit)
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive, action: onDelete) {
-                Label("Удалить", systemImage: "trash")
+                Label(L10n.deleteTask, systemImage: "trash")
             }
         }
     }
@@ -444,7 +444,7 @@ struct FloatingAddButton: View {
         }
         .buttonStyle(.plain)
         .bounceOnTap()
-        .accessibilityLabel("Добавить задачу")
+        .accessibilityLabel(L10n.addTask)
     }
 }
 

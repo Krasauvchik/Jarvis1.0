@@ -15,6 +15,7 @@ struct WellnessView: View {
     @State private var sleepEnd = Date()
     @State private var activityTitle = ""
     @State private var activityMinutes = ""
+    @State private var validationError: String?
     
     #if os(iOS)
     @State private var photoItem: PhotosPickerItem?
@@ -37,19 +38,27 @@ struct WellnessView: View {
                 .padding()
             }
             .background(JarvisTheme.background.ignoresSafeArea())
-            .navigationTitle("Здоровье")
+            .navigationTitle(L10n.healthTitle)
+            .alert(L10n.errorTitle, isPresented: Binding(
+                get: { validationError != nil },
+                set: { if !$0 { validationError = nil } }
+            )) {
+                Button("OK") { validationError = nil }
+            } message: {
+                Text(validationError ?? "")
+            }
         }
     }
     
     private var adviceSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Советы")
+            Text(L10n.tipsTitle)
                 .font(.headline.weight(.semibold))
                 .foregroundStyle(JarvisTheme.textPrimary)
             
             let advice = aiManager.generateAdvice(from: store.tasks)
             if advice.isEmpty {
-                Text("Добавь задачи для персональных рекомендаций")
+                Text(L10n.addTasksForTips)
                     .font(.subheadline)
                     .foregroundStyle(JarvisTheme.textSecondary)
             } else {
@@ -61,26 +70,29 @@ struct WellnessView: View {
             }
         }
         .jarvisSectionCard()
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(L10n.healthTipsLabel)
     }
     
     private var mealsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Питание")
+                Text(L10n.nutritionTitle)
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(JarvisTheme.textPrimary)
                 Spacer()
                 if wellness.todayCalories > 0 {
-                    Text("\(wellness.todayCalories) ккал")
+                    Text("\(wellness.todayCalories) \(L10n.kcal)")
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(JarvisTheme.accent)
                 }
             }
             
             HStack(spacing: 10) {
-                TextField("Блюдо", text: $mealTitle)
+                TextField(L10n.dish, text: $mealTitle)
                     .textFieldStyle(.roundedBorder)
-                TextField("ккал", text: $mealCalories)
+                    .frame(minWidth: 80)
+                TextField(L10n.kcal, text: $mealCalories)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 70)
                     #if os(iOS)
@@ -95,6 +107,7 @@ struct WellnessView: View {
                 .buttonStyle(.plain)
                 .bounceOnTap()
                 .disabled(mealTitle.isEmpty)
+                .accessibilityLabel(L10n.addDish)
                 
                 #if os(iOS)
                 PhotosPicker(selection: $photoItem, matching: .images) {
@@ -118,7 +131,7 @@ struct WellnessView: View {
                             .foregroundStyle(JarvisTheme.textSecondary)
                     }
                     Spacer()
-                    Text("\(meal.calories) ккал")
+                    Text("\(meal.calories) \(L10n.kcal)")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(JarvisTheme.accent)
                 }
@@ -129,21 +142,23 @@ struct WellnessView: View {
     
     private var sleepSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Сон")
+            Text(L10n.sleepSection)
                 .font(.headline.weight(.semibold))
                 .foregroundStyle(JarvisTheme.textPrimary)
             
-            DatePicker("Лёг", selection: $sleepStart, displayedComponents: [.date, .hourAndMinute])
-            DatePicker("Встал", selection: $sleepEnd, displayedComponents: [.date, .hourAndMinute])
+            DatePicker(L10n.bedtime, selection: $sleepStart, displayedComponents: [.date, .hourAndMinute])
+            DatePicker(L10n.wakeUp, selection: $sleepEnd, displayedComponents: [.date, .hourAndMinute])
             
-            Button("Сохранить ночь") { addSleep() }
+            Button(L10n.saveNight) { addSleep() }
                 .buttonStyle(PrimaryButtonStyle())
                 .bounceOnTap()
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
+                .accessibilityLabel(L10n.saveSleepLabel)
+                .accessibilityHint(L10n.saveSleepHint)
             
             if let last = wellness.sleep.last {
-                Text(String(format: "Последний сон: %.1f ч", last.hours))
+                Text(String(format: "%@ %.1f", L10n.lastSleepHours, last.hours))
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(JarvisTheme.accent)
             }
@@ -153,14 +168,14 @@ struct WellnessView: View {
     
     private var activitySection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Активность")
+            Text(L10n.activitySection)
                 .font(.headline.weight(.semibold))
                 .foregroundStyle(JarvisTheme.textPrimary)
             
             HStack(spacing: 10) {
-                TextField("Тип активности", text: $activityTitle)
+                TextField(L10n.activityType, text: $activityTitle)
                     .textFieldStyle(.roundedBorder)
-                TextField("мин", text: $activityMinutes)
+                TextField(L10n.minutesShort, text: $activityMinutes)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 60)
                     #if os(iOS)
@@ -175,6 +190,7 @@ struct WellnessView: View {
                 .buttonStyle(.plain)
                 .bounceOnTap()
                 .disabled(activityTitle.isEmpty)
+                .accessibilityLabel(L10n.addActivity)
             }
             
             ForEach(wellness.activities.suffix(5).reversed()) { act in
@@ -186,7 +202,7 @@ struct WellnessView: View {
                             .foregroundStyle(JarvisTheme.textSecondary)
                     }
                     Spacer()
-                    Text("\(act.minutes) мин")
+                    Text("\(act.minutes) \(L10n.minutesShort)")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(JarvisTheme.accent)
                 }
@@ -197,6 +213,7 @@ struct WellnessView: View {
     
     private func addMeal() {
         if let error = WellnessValidator.validateMeal(title: mealTitle, calories: mealCalories) {
+            validationError = error
             Logger.shared.warning("Meal validation: \(error)")
             return
         }
@@ -207,6 +224,7 @@ struct WellnessView: View {
     
     private func addSleep() {
         if let error = WellnessValidator.validateSleep(start: sleepStart, end: sleepEnd) {
+            validationError = error
             Logger.shared.warning("Sleep validation: \(error)")
             return
         }
@@ -215,6 +233,7 @@ struct WellnessView: View {
     
     private func addActivity() {
         if let error = WellnessValidator.validateActivity(title: activityTitle, minutes: activityMinutes) {
+            validationError = error
             Logger.shared.warning("Activity validation: \(error)")
             return
         }
@@ -238,7 +257,10 @@ struct WellnessView: View {
                 addMeal()
             }
         } catch {
-            print("Nutrition analysis failed: \(error)")
+            await MainActor.run {
+                validationError = L10n.photoRecognitionFailed
+            }
+            Logger.shared.error(error, context: "Nutrition analysis")
         }
     }
     #endif

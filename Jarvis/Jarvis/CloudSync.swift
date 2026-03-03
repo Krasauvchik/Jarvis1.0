@@ -183,4 +183,28 @@ struct WellnessSnapshot: Codable {
     var meals: [MealEntry]
     var sleep: [SleepEntry]
     var activities: [ActivityEntry]
+    var waterEntries: [WaterEntry]?
+    var goals: WellnessGoals?
+    
+    enum CodingKeys: String, CodingKey {
+        case meals, sleep, activities, waterEntries, goals
+    }
+    
+    init(meals: [MealEntry], sleep: [SleepEntry], activities: [ActivityEntry],
+         waterEntries: [WaterEntry]? = nil, goals: WellnessGoals? = nil) {
+        self.meals = meals
+        self.sleep = sleep
+        self.activities = activities
+        self.waterEntries = waterEntries
+        self.goals = goals
+    }
+    
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        meals = try c.decode([MealEntry].self, forKey: .meals)
+        sleep = try c.decode([SleepEntry].self, forKey: .sleep)
+        activities = try c.decode([ActivityEntry].self, forKey: .activities)
+        waterEntries = try c.decodeIfPresent([WaterEntry].self, forKey: .waterEntries)
+        goals = try c.decodeIfPresent(WellnessGoals.self, forKey: .goals)
+    }
 }

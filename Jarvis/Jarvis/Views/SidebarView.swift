@@ -1,5 +1,38 @@
 import SwiftUI
 
+// MARK: - App Mode (Work / Personal)
+
+enum AppMode: String, CaseIterable, Identifiable {
+    case work = "Работа"
+    case personal = "Личный"
+    
+    var id: String { rawValue }
+    
+    var icon: String {
+        switch self {
+        case .work: return "briefcase.fill"
+        case .personal: return "heart.fill"
+        }
+    }
+    
+    var color: Color {
+        switch self {
+        case .work: return JarvisTheme.accentBlue
+        case .personal: return JarvisTheme.accentGreen
+        }
+    }
+    
+    /// Sections visible in this mode
+    var visibleSections: [NavigationSection] {
+        switch self {
+        case .work:
+            return [.inbox, .today, .scheduled, .futurePlans, .completed, .all, .calendarSection, .mailSection, .messengers, .analytics, .projects, .chat]
+        case .personal:
+            return [.today, .health, .scheduled, .completed, .calendarSection]
+        }
+    }
+}
+
 // MARK: - Navigation Section
 
 enum NavigationSection: String, CaseIterable, Identifiable {
@@ -9,6 +42,7 @@ enum NavigationSection: String, CaseIterable, Identifiable {
     case futurePlans = "Планы на будущее"
     case completed = "Выполнено"
     case all = "Все задачи"
+    case health = "Здоровье"
     case calendarSection = "Календарь"
     case mailSection = "Почта"
     case messengers = "Мессенджеры"
@@ -26,6 +60,7 @@ enum NavigationSection: String, CaseIterable, Identifiable {
         case .futurePlans: return "sparkles"
         case .completed: return "checkmark.circle.fill"
         case .all: return "list.bullet"
+        case .health: return "heart.text.square.fill"
         case .calendarSection: return "calendar.circle"
         case .mailSection: return "envelope.fill"
         case .messengers: return "bubble.left.and.bubble.right.fill"
@@ -43,6 +78,7 @@ enum NavigationSection: String, CaseIterable, Identifiable {
         case .futurePlans: return JarvisTheme.accentTeal
         case .completed: return JarvisTheme.accentGreen
         case .all: return JarvisTheme.accentPurple
+        case .health: return Color(red: 1.0, green: 0.3, blue: 0.4)
         case .calendarSection: return JarvisTheme.accentBlue
         case .mailSection: return JarvisTheme.accentOrange
         case .messengers: return Color(red: 0.07, green: 0.72, blue: 0.34)
@@ -58,6 +94,7 @@ enum NavigationSection: String, CaseIterable, Identifiable {
 struct SidebarView: View {
     let theme: JarvisTheme
     @Binding var selectedSection: NavigationSection
+    @Binding var appMode: AppMode
     @ObservedObject var store: PlannerStore
     let onHide: () -> Void
     let onShowSleepCalculator: () -> Void
@@ -66,45 +103,90 @@ struct SidebarView: View {
     
     @StateObject private var userProfile = UserProfile.shared
     
+    private var visibleSections: [NavigationSection] {
+        appMode.visibleSections
+    }
+    
     var body: some View {
         VStack(spacing: 0) {
-            // App Header
-            HStack {
-                Circle()
-                    .fill(LinearGradient(colors: [JarvisTheme.accent, JarvisTheme.accentOrange], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(width: 36, height: 36)
-                    .overlay(
-                        Text("J")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundColor(.white)
-                    )
-                
-                Text("Jarvis")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundColor(theme.textPrimary)
-                
-                Spacer()
-                
-                Button(action: onHide) {
-                    Image(systemName: "sidebar.leading")
-                        .font(.system(size: 16))
-                        .foregroundColor(theme.textSecondary)
+            // App Header + Actions
+            VStack(spacing: 8) {
+                HStack(spacing: 10) {
+                    Circle()
+                        .fill(LinearGradient(colors: [JarvisTheme.accent, JarvisTheme.accentOrange], startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .frame(width: 32, height: 32)
+                        .overlay(
+                            Text("J")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundColor(.white)
+                        )
+                    
+                    Text("Jarvis")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(theme.textPrimary)
+                    
+                    Spacer()
+                    
+                    Button(action: onShowSleepCalculator) {
+                        Image(systemName: "moon.zzz.fill")
+                            .font(.system(size: 14))
+                            .foregroundColor(theme.textSecondary)
+                            .frame(width: 28, height: 28)
+                            .background(Circle().fill(theme.cardBackground))
+                    }
+                    .buttonStyle(.plain)
+                    .bounceOnTap()
+                    .help("Калькулятор сна")
+                    .accessibilityLabel("Калькулятор сна")
+                    
+                    Button(action: onShowSettings) {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 14))
+                            .foregroundColor(theme.textSecondary)
+                            .frame(width: 28, height: 28)
+                            .background(Circle().fill(theme.cardBackground))
+                    }
+                    .buttonStyle(.plain)
+                    .bounceOnTap()
+                    .help("Настройки")
+                    .accessibilityLabel("Настройки")
+                    
+                    Button(action: onShowProfile) {
+                        profileAvatar
+                    }
+                    .buttonStyle(.plain)
+                    .bounceOnTap()
+                    .accessibilityLabel("Профиль")
+                    
+                    Button(action: onHide) {
+                        Image(systemName: "sidebar.leading")
+                            .font(.system(size: 14))
+                            .foregroundColor(theme.textSecondary)
+                            .frame(width: 28, height: 28)
+                            .background(Circle().fill(theme.cardBackground))
+                    }
+                    .buttonStyle(.plain)
+                    .bounceOnTap()
+                    .help("Скрыть панель")
+                    .accessibilityLabel("Скрыть боковую панель")
                 }
-                .buttonStyle(.plain)
-                .bounceOnTap()
-                .help("Скрыть панель")
-                .accessibilityLabel("Скрыть боковую панель")
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 16)
+            .padding(.horizontal, 14)
+            .padding(.top, 14)
+            .padding(.bottom, 6)
             .animateOnAppear(delay: 0)
+            
+            // Mode Toggle
+            modeToggle
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
             
             Divider().background(theme.divider)
             
             // Navigation Items
             ScrollView {
                 VStack(spacing: 4) {
-                    ForEach(Array(NavigationSection.allCases.enumerated()), id: \.element.id) { index, section in
+                    ForEach(Array(visibleSections.enumerated()), id: \.element.id) { index, section in
                         SidebarNavigationRow(
                             section: section,
                             isSelected: selectedSection == section,
@@ -128,7 +210,7 @@ struct SidebarView: View {
             
             Spacer()
             
-            // Statistics
+            // Statistics at bottom
             VStack(spacing: 8) {
                 Divider().background(theme.divider)
                 
@@ -137,46 +219,8 @@ struct SidebarView: View {
                     miniStatCard(value: completionPercentage, label: "%", color: JarvisTheme.accentGreen)
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                .padding(.vertical, 10)
                 .animation(.spring(response: 0.4), value: store.tasks.count)
-            }
-            
-            // Bottom Actions
-            VStack(spacing: 8) {
-                Divider().background(theme.divider)
-                
-                HStack(spacing: 12) {
-                    Button(action: onShowSleepCalculator) {
-                        Image(systemName: "moon.zzz.fill")
-                            .font(.system(size: 16))
-                            .foregroundColor(theme.textSecondary)
-                    }
-                    .buttonStyle(.plain)
-                    .bounceOnTap()
-                    .help("Калькулятор сна")
-                    .accessibilityLabel("Калькулятор сна")
-                    
-                    Button(action: onShowSettings) {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 16))
-                            .foregroundColor(theme.textSecondary)
-                    }
-                    .buttonStyle(.plain)
-                    .bounceOnTap()
-                    .help("Настройки")
-                    .accessibilityLabel("Настройки")
-                    
-                    Spacer()
-                    
-                    Button(action: onShowProfile) {
-                        profileAvatar
-                    }
-                    .buttonStyle(.plain)
-                    .bounceOnTap()
-                    .accessibilityLabel("Профиль")
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
             }
         }
         .background(theme.sidebarBackground)
@@ -199,6 +243,44 @@ struct SidebarView: View {
     private var completionPercentage: Int {
         guard store.tasks.count > 0 else { return 0 }
         return Int(Double(store.tasks.filter { $0.isCompleted }.count) / Double(store.tasks.count) * 100)
+    }
+    
+    // MARK: - Mode Toggle
+    
+    private var modeToggle: some View {
+        HStack(spacing: 0) {
+            ForEach(AppMode.allCases) { mode in
+                Button(action: {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                        appMode = mode
+                        // Reset section if not visible in new mode
+                        if !mode.visibleSections.contains(selectedSection) {
+                            selectedSection = .today
+                        }
+                    }
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: mode.icon)
+                            .font(.system(size: 12, weight: .semibold))
+                        Text(mode.rawValue)
+                            .font(.system(size: 12, weight: appMode == mode ? .bold : .medium))
+                    }
+                    .foregroundColor(appMode == mode ? .white : theme.textSecondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(
+                        Capsule()
+                            .fill(appMode == mode ? mode.color : Color.clear)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(
+            Capsule()
+                .fill(theme.cardBackground)
+        )
     }
     
     private func miniStatCard(value: Int, label: String, color: Color) -> some View {
@@ -256,8 +338,10 @@ struct SidebarNavigationRow: View {
                 Text(section.rawValue)
                     .font(.system(size: 15, weight: isSelected ? .semibold : .medium))
                     .foregroundColor(isSelected ? theme.textPrimary : theme.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                 
-                Spacer()
+                Spacer(minLength: 4)
                 
                 if count > 0 {
                     Text("\(count)")
@@ -269,6 +353,7 @@ struct SidebarNavigationRow: View {
                             Capsule()
                                 .fill(isSelected ? theme.cardBackground : Color.clear)
                         )
+                        .fixedSize()
                 }
             }
             .padding(.horizontal, 12)
@@ -291,6 +376,7 @@ struct SidebarNavigationRow: View {
             if case .messengers = section { return false }
             if case .analytics = section { return false }
             if case .projects = section { return false }
+            if case .health = section { return false }
             guard let taskID = items.first, let uuid = UUID(uuidString: taskID) else { return false }
             onDrop(uuid)
             return true
