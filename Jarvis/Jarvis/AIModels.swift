@@ -74,6 +74,14 @@ enum AIModel: String, CaseIterable, Identifiable, Codable, Sendable {
     
     /// Провайдер полностью готов к использованию
     var isReady: Bool { !needsSetup }
+
+    /// Провайдер заявлен, но ещё не реализован — показываем «Скоро» и блокируем выбор.
+    var isComingSoon: Bool {
+        switch self {
+        case .yandexGPT: return true   // нет реального клиента YandexGPT
+        case .gemini, .cloudGPT, .heuristic: return false
+        }
+    }
 }
 
 final class HeuristicAdapter: Sendable {

@@ -232,7 +232,7 @@ struct SettingsContent: View {
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(theme.textSecondary)
                         HStack {
-                            TextField("https://158.160.48.202:8000", text: $backendURL)
+                            TextField("https://jarvis-app.mooo.com", text: $backendURL)
                                 .textFieldStyle(.roundedBorder)
                                 .font(.system(size: 14, design: .monospaced))
                                 .autocorrectionDisabled()

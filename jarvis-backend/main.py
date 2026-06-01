@@ -1239,7 +1239,7 @@ class ContextSearchPayload(BaseModel):
 
 @app.post("/ai/context-search")
 async def ai_context_search(payload: ContextSearchPayload):
-    """Search across all connected sources (calendar, mail, Telegram, WhatsApp).
+    """Search across all connected sources (calendar, mail, Telegram).
 
     Returned JSON structure matches what AIContextEngine expects on the client.
     """
@@ -1251,7 +1251,6 @@ async def ai_context_search(payload: ContextSearchPayload):
         "calendar_matches": [],
         "mail_matches": [],
         "telegram_matches": [],
-        "whatsapp_matches": [],
     }
 
     if not query:

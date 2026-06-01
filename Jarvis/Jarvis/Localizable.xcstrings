@@ -1138,6 +1138,22 @@
         }
       }
     },
+    "ai_model_badge_coming_soon" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SOON"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "СКОРО"
+          }
+        }
+      }
+    },
     "ai_model_badge_offline" : {
       "localizations" : {
         "en" : {

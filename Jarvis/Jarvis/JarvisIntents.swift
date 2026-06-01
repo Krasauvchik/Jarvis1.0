@@ -46,7 +46,12 @@ struct ShowJarvisTodayIntent: AppIntent {
     static var description = IntentDescription("intent_show_today_description")
     static let supportedModes: IntentModes = [.foreground]
 
+    @MainActor
     func perform() async throws -> some IntentResult {
+        // Bring the app forward and navigate to the Today section.
+        if let url = URL(string: "jarvis://today") {
+            DeepLinkManager.shared.handle(url)
+        }
         return .result()
     }
 }

@@ -21,14 +21,16 @@ API для приложения Jarvis Planner (календарь, анализ
 
 ## Сервер
 
-Backend развёрнут на `158.160.48.202:8000`.
+Публичный адрес: `https://jarvis-app.mooo.com` (валидный TLS через Caddy на :443,
+проксирует на внутренний uvicorn `127.0.0.1:8000`). Запускается через systemd-сервис
+`jarvis-backend` (см. `jarvis-backend.service`). SSH — по IP сервера.
 
 ### Перезапуск (если упал)
 
 ```bash
-ssh -i ~/.ssh/bilal_key bilal@158.160.48.202
-cd ~/jarvis-backend && source venv/bin/activate
-nohup uvicorn main:app --host 0.0.0.0 --port 8000 > server.log 2>&1 &
+ssh bilal@158.160.48.202        # используйте свой текущий SSH-ключ
+sudo systemctl restart jarvis-backend
+sudo systemctl status jarvis-backend
 ```
 
 ### Запуск как systemd-сервис (требуется sudo)

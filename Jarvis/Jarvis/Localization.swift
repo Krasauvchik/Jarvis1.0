@@ -944,6 +944,7 @@ enum L10n {
     static var aiModelBadgeFree: String { _s("ai_model_badge_free") }
     static var aiModelBadgeBestRu: String { _s("ai_model_badge_best_ru") }
     static var aiModelBadgeOffline: String { _s("ai_model_badge_offline") }
+    static var aiModelBadgeComingSoon: String { _s("ai_model_badge_coming_soon") }
     
     // AI Provider Settings
     static var aiProviderSettings: String { _s("ai_provider_settings") }

@@ -26,6 +26,7 @@ struct AIProviderSettingsView: View {
 
         return VStack(spacing: 0) {
             Button(action: {
+                guard !model.isComingSoon else { return }  // нельзя выбрать нереализованный провайдер
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                     aiManager.selectedModel = model
                 }
@@ -48,7 +49,14 @@ struct AIProviderSettingsView: View {
                                 .font(.system(size: 16, weight: .semibold))
                                 .foregroundColor(theme.textPrimary)
 
-                            if let badge = model.badge {
+                            if model.isComingSoon {
+                                Text(L10n.aiModelBadgeComingSoon)
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Capsule().fill(Color.gray))
+                            } else if let badge = model.badge {
                                 Text(badge)
                                     .font(.system(size: 10, weight: .bold))
                                     .foregroundColor(.white)
@@ -58,7 +66,9 @@ struct AIProviderSettingsView: View {
                             }
 
                             // Status indicator
-                            statusDot(for: model)
+                            if !model.isComingSoon {
+                                statusDot(for: model)
+                            }
                         }
                         Text(model.descriptionText)
                             .font(.system(size: 12))
@@ -114,6 +124,7 @@ struct AIProviderSettingsView: View {
                         .stroke(isSelected ? model.accentColor.opacity(0.5) : Color.clear, lineWidth: 1.5)
                 )
         )
+        .opacity(model.isComingSoon ? 0.55 : 1.0)
     }
 
     // MARK: - Status Dot

@@ -33,8 +33,9 @@ struct OnboardingView: View {
     @State private var wakeUpTime = Calendar.current.date(bySettingHour: 8, minute: 0, second: 0, of: Date()) ?? Date()
     @State private var bedTime = Calendar.current.date(bySettingHour: 22, minute: 0, second: 0, of: Date()) ?? Date()
     @State private var acceptedTerms = false
-    
-    private let totalPages = 7
+    @State private var geminiKey = ""
+
+    private let totalPages = 8
     
     var body: some View {
         ZStack {
@@ -54,7 +55,8 @@ struct OnboardingView: View {
                     bedTimePage.tag(3)
                     planningPage.tag(4)
                     modulesPage.tag(5)
-                    readyPage.tag(6)
+                    aiSetupPage.tag(6)
+                    readyPage.tag(7)
                 }
                 #if os(iOS)
                 .tabViewStyle(.page(indexDisplayMode: .never))
@@ -442,8 +444,84 @@ struct OnboardingView: View {
         }
     }
     
-    // MARK: - Page 7: Ready (What's up next?)
-    
+    // MARK: - Page 7: AI Assistant Setup
+
+    private var aiSetupPage: some View {
+        VStack(spacing: 20) {
+            Spacer()
+
+            // Brain illustration
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [JarvisTheme.accent.opacity(0.3), JarvisTheme.accentPurple.opacity(0.3)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 100, height: 100)
+                Image(systemName: "brain.head.profile")
+                    .font(.system(size: 46))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [JarvisTheme.accent, JarvisTheme.accentPurple],
+                            startPoint: .top, endPoint: .bottom
+                        )
+                    )
+            }
+
+            VStack(spacing: 8) {
+                Text("Enable your AI Assistant")
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundColor(.white)
+                Text("Jarvis uses Google Gemini for chat, planning and meeting briefings. Paste a free API key to turn it on — you can also do this later in Settings.")
+                    .font(.system(size: 14))
+                    .foregroundColor(.white.opacity(0.7))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 32)
+            }
+
+            // API key field
+            SecureField("Gemini API key", text: $geminiKey)
+                .textContentType(.password)
+                #if os(iOS)
+                .autocapitalization(.none)
+                .disableAutocorrection(true)
+                #endif
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color.white))
+                .foregroundColor(.black)
+                .padding(.horizontal, 40)
+
+            Link(destination: URL(string: "https://aistudio.google.com/apikey")!) {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up.right.square")
+                    Text("Get a free key at aistudio.google.com")
+                }
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(JarvisTheme.accent)
+            }
+
+            Spacer()
+
+            onboardingButton(title: geminiKey.trimmingCharacters(in: .whitespaces).isEmpty ? "Skip for now" : "Save & Continue",
+                             accent: JarvisTheme.accent) {
+                let trimmed = geminiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    SecretStore.set(trimmed, for: .geminiAPIKey)
+                }
+                // Ask for notification permission so reminders work.
+                NotificationManager.shared.requestAuthorization()
+                withAnimation { currentPage = 7 }
+            }
+        }
+        .padding(.bottom, 40)
+    }
+
+    // MARK: - Page 8: Ready (What's up next?)
+
     private var readyPage: some View {
         VStack(spacing: 0) {
             Spacer().frame(height: 24)

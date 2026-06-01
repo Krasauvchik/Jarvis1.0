@@ -1,6 +1,9 @@
 import Foundation
 import Combine
 import SwiftUI
+#if canImport(WidgetKit)
+import WidgetKit
+#endif
 
 // MARK: - Store with iCloud Sync
 
@@ -122,6 +125,9 @@ final class PlannerStore: ObservableObject {
             tasks.prefix(20).map { WidgetTaskSnapshot(id: $0.id, title: $0.title, date: $0.date, isCompleted: $0.isCompleted, isAllDay: $0.isAllDay, colorIndex: $0.colorIndex) }
         ) {
             appGroupDefaults?.set(widgetData, forKey: "jarvis_widget_tasks")
+            #if canImport(WidgetKit)
+            WidgetCenter.shared.reloadAllTimelines()  // refresh home-screen widget
+            #endif
         }
         
         // Batch save categories, tags, projects to SwiftData (single call each instead of N loops)
