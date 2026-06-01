@@ -447,11 +447,13 @@ enum L10n {
     static var openFullChat: String { _s("open_full_chat") }
     static var stopRecording: String { _s("stop_recording") }
     static var voiceCommand: String { _s("voice_command") }
+    static var chipPlanDay: String { _s("chip_plan_day") }
     static var chipBriefing: String { _s("chip_briefing") }
     static var chipSearch: String { _s("chip_search") }
     static var chipDayOverview: String { _s("chip_day_overview") }
     static var chipCoach: String { _s("chip_coach") }
     static var chipDelegate: String { _s("chip_delegate") }
+    static var promptPlanDay: String { _s("prompt_plan_day") }
     static var promptBriefing: String { _s("prompt_briefing") }
     static var promptSearch: String { _s("prompt_search") }
     static var promptDayOverview: String { _s("prompt_day_overview") }

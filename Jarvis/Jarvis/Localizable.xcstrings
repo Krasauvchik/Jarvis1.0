@@ -2438,6 +2438,22 @@
         }
       }
     },
+    "chip_plan_day" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plan day"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "План дня"
+          }
+        }
+      }
+    },
     "chip_coach" : {
       "localizations" : {
         "en" : {
@@ -8528,6 +8544,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "/брифинг"
+          }
+        }
+      }
+    },
+    "prompt_plan_day" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plan my day"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Распланируй мой день"
           }
         }
       }

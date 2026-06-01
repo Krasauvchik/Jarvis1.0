@@ -224,6 +224,7 @@ final class AIManager: ObservableObject {
         case coaching(String, AILifeCoach.LifeCategory) // "качать плечи" → фитнес-план
         case delegateTask(String, String)       // "поставь задачу {title} пользователю {user}"
         case calendarQuery(String)             // "какие встречи сегодня?" / "когда я свободен?"
+        case planDay                            // "распланируй мой день" — авто-расстановка задач
     }
     
     /// Определяет намерение пользователя по тексту сообщения.
@@ -277,6 +278,15 @@ final class AIManager: ObservableObject {
             return .coaching(message, category)
         }
         
+        // 4.5 Plan my day — авто-расстановка незапланированных задач (ru + en)
+        let planDayPatterns = ["распланируй день", "распланируй мой день", "расставь задачи",
+                               "распиши день", "спланируй день", "организуй день",
+                               "разложи задачи по дню", "plan my day", "plan my tasks",
+                               "organize my day", "schedule my day", "auto-plan", "autoplan"]
+        if planDayPatterns.contains(where: { lower.contains($0) }) {
+            return .planDay
+        }
+
         // 5. Calendar queries (ru + en)
         let calendarPatterns = ["какие встречи", "что в календаре", "расписание на",
                                "мои встречи", "свободные окна", "когда я свободен",
@@ -342,7 +352,10 @@ final class AIManager: ObservableObject {
             
         case .calendarQuery(let query):
             return await handleCalendarQuery(query: query, tasks: tasks)
-            
+
+        case .planDay:
+            return await handlePlanDay(tasks: tasks, date: date)
+
         case .standard:
             return await handleStandardCommand(message: message, tasks: tasks, date: date)
         }
@@ -504,6 +517,114 @@ final class AIManager: ObservableObject {
         )
     }
     
+    // MARK: - Plan My Day (AI auto-scheduling)
+
+    private struct PlanSlot: Decodable {
+        let index: Int
+        let start: String
+        let durationMinutes: Int?
+    }
+
+    /// Берёт незапланированные (inbox) задачи и раскладывает их по свободным слотам дня
+    /// с учётом календарных событий и уже запланированных задач. Сигнатурная фича Structured AI.
+    private func handlePlanDay(tasks: [PlannerTask], date: Date) async -> AICommandResponse {
+        let cal = Calendar.current
+        let inbox = tasks.filter { $0.isInbox && !$0.isCompleted }
+        guard !inbox.isEmpty else {
+            return AICommandResponse(response: "📭 Во входящих нет незапланированных задач — день уже чист.", actions: nil)
+        }
+        guard gemini.isConfigured else {
+            return AICommandResponse(response: "Чтобы планировать день через ИИ, добавьте Gemini-ключ в Настройки → AI.", actions: nil)
+        }
+
+        // Занятость дня: события календаря + уже запланированные задачи на этот день.
+        await eventKit.fetchEvents(for: date)
+        let dayEvents = eventKit.systemEvents.filter { cal.isDate($0.startDate, inSameDayAs: date) && !$0.isAllDay }
+        let scheduled = tasks.filter { !$0.isInbox && !$0.isAllDay && cal.isDate($0.date, inSameDayAs: date) }
+
+        let riseH = (UserDefaults.standard.object(forKey: "jarvis_rise_hour") as? Int) ?? Config.Defaults.riseHour
+        let windH = (UserDefaults.standard.object(forKey: "jarvis_winddown_hour") as? Int) ?? Config.Defaults.windDownHour
+
+        let tf = DateFormatter()
+        tf.dateFormat = "HH:mm"
+        tf.timeZone = .current
+
+        let taskLines = inbox.enumerated().map { i, t in
+            "\(i): \(t.title) (~\(t.durationMinutes > 0 ? t.durationMinutes : 60) мин)"
+        }.joined(separator: "\n")
+
+        var busyLines = dayEvents.map { "\(tf.string(from: $0.startDate))–\(tf.string(from: $0.endDate)) \($0.title)" }
+        busyLines += scheduled.map {
+            let end = $0.date.addingTimeInterval(TimeInterval(max($0.durationMinutes, 15) * 60))
+            return "\(tf.string(from: $0.date))–\(tf.string(from: end)) \($0.title)"
+        }
+
+        let systemPrompt = """
+        Ты — Jarvis, планировщик дня. Разложи незапланированные задачи пользователя по СВОБОДНЫМ слотам.
+        Дата: \(Self.currentDateTimeForLLM()). Часовой пояс: \(Self.currentTimezoneOffset()).
+        Рабочие часы: с \(riseH):00 до \(windH):00. Не накладывай задачи на занятые интервалы и друг на друга, оставляй 5–10 минут буфера, уважай приоритет (более ранние в списке — важнее).
+
+        Незапланированные задачи (индекс: название (длительность)):
+        \(taskLines)
+
+        Занятые интервалы:
+        \(busyLines.isEmpty ? "нет" : busyLines.joined(separator: "\n"))
+
+        Верни СТРОГО JSON-массив без пояснений и без markdown:
+        [{"index": 0, "start": "\(Self.exampleDateForLLM())", "durationMinutes": 60}]
+        Используй ISO8601 со смещением часового пояса. Если задача не помещается в день — не включай её.
+        """
+
+        guard let text = await gemini.chat(
+            messages: [(role: "user", content: "Распланируй мой день")],
+            systemPrompt: systemPrompt,
+            temperature: 0.2,
+            maxTokens: 1200
+        ) else {
+            return AICommandResponse(response: "Не удалось связаться с ИИ для планирования. Попробуйте позже.", actions: nil)
+        }
+
+        // Парсим JSON-массив (убираем возможные ```-ограждения).
+        var cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.hasPrefix("```") {
+            cleaned = cleaned.replacingOccurrences(of: "```json", with: "")
+                .replacingOccurrences(of: "```", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard let data = cleaned.data(using: .utf8),
+              let slots = try? JSONDecoder().decode([PlanSlot].self, from: data),
+              !slots.isEmpty else {
+            return AICommandResponse(response: "Не удалось разложить задачи по слотам. Попробуйте переформулировать.", actions: nil)
+        }
+
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime]
+        let store = PlannerStore.shared
+        var placed: [(time: Date, title: String)] = []
+        var usedIndices = Set<Int>()
+
+        for slot in slots {
+            guard slot.index >= 0, slot.index < inbox.count, !usedIndices.contains(slot.index) else { continue }
+            guard let start = iso.date(from: slot.start) else { continue }
+            let task = inbox[slot.index]
+            let dur = (slot.durationMinutes ?? 0) > 0 ? slot.durationMinutes! : (task.durationMinutes > 0 ? task.durationMinutes : 60)
+            store.scheduleFromInbox(task, date: start, durationMinutes: dur, isAllDay: false)
+            usedIndices.insert(slot.index)
+            placed.append((start, task.title))
+        }
+
+        guard !placed.isEmpty else {
+            return AICommandResponse(response: "Не удалось распланировать задачи на сегодня.", actions: nil)
+        }
+
+        placed.sort { $0.time < $1.time }
+        let lines = placed.map { "• \(tf.string(from: $0.time)) — \($0.title)" }.joined(separator: "\n")
+        let leftover = inbox.count - placed.count
+        var footer = ""
+        if leftover > 0 { footer = "\n\nОсталось во входящих: \(leftover) (не поместились в день)." }
+        return AICommandResponse(response: "🗓 Распланировано задач: \(placed.count)\n\(lines)\(footer)", actions: nil)
+    }
+
     private func handleStandardCommand(message: String, tasks: [PlannerTask], date: Date) async -> AICommandResponse {
         // 0. Чисто эвристический режим или оффлайн без облака
         if selectedModel == .heuristic || (!NetworkMonitor.shared.isConnected && !selectedModel.isLocal) {

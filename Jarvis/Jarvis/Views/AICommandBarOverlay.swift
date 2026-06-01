@@ -215,6 +215,10 @@ struct AICommandBar: View {
     private var quickActionChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
+                chip(icon: "wand.and.stars", text: L10n.chipPlanDay, color: JarvisTheme.accent) {
+                    inputText = L10n.promptPlanDay
+                    sendQuickCommand()
+                }
                 chip(icon: "doc.text.magnifyingglass", text: L10n.chipBriefing, color: JarvisTheme.accentPurple) {
                     inputText = L10n.promptBriefing
                     sendQuickCommand()
