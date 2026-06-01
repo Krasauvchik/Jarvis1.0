@@ -1,5 +1,6 @@
 #if !os(watchOS)
 import SwiftUI
+import EventKit
 
 struct CalendarView: View {
     @State private var events: [CalendarEventItem] = []
@@ -7,6 +8,19 @@ struct CalendarView: View {
     @State private var errorMessage: String?
     @State private var isAuthorized = false
     @State private var checkingAuth = true
+    @State private var showCreateEvent = false
+    @StateObject private var calSync = CalendarSyncService.shared
+    
+    private var groupedEvents: [(key: String, date: Date, events: [CalendarEventItem])] {
+        let cal = Calendar.current
+        let grouped = Dictionary(grouping: events) { event in
+            cal.startOfDay(for: event.startDate)
+        }
+        return grouped.sorted { $0.key < $1.key }.map { (date, items) in
+            let label = daySectionLabel(for: date)
+            return (key: label, date: date, events: items.sorted { $0.startDate < $1.startDate })
+        }
+    }
     
     var body: some View {
         NavigationStack {
@@ -19,7 +33,10 @@ struct CalendarView: View {
             .task { await checkAuth() }
             .refreshable {
                 await checkAuth()
-                if isAuthorized { await loadEvents() }
+                await loadEvents()
+            }
+            .sheet(isPresented: $showCreateEvent) {
+                CreateEventSheet { await loadEvents() }
             }
         }
     }
@@ -28,9 +45,9 @@ struct CalendarView: View {
     private var contentView: some View {
         if checkingAuth {
             ProgressView(L10n.checking)
-        } else if !isAuthorized {
+        } else if !isAuthorized && !calSync.isAuthorizedForCalendar {
             authPromptView
-        } else if let err = errorMessage {
+        } else if let err = errorMessage, events.isEmpty {
             errorView(err)
         } else if events.isEmpty {
             emptyView
@@ -40,16 +57,49 @@ struct CalendarView: View {
     }
     
     private var eventsList: some View {
-        ScrollView {
-            LazyVStack(spacing: 12) {
-                ForEach(Array(events.enumerated()), id: \.element.id) { index, event in
-                    CalendarEventRow(event: event)
-                        .jarvisSectionCard()
-                        .animateOnAppear(delay: Double(index) * 0.05)
-                        .transition(.cardAppear)
+        List {
+            ForEach(groupedEvents, id: \.key) { section in
+                Section {
+                    ForEach(section.events) { event in
+                        CalendarEventRow(event: event)
+                            .listRowBackground(JarvisTheme.cardBackground)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                if event.source == .google {
+                                    Button(role: .destructive) {
+                                        Task { await deleteGoogleEvent(event) }
+                                    } label: {
+                                        Label(L10n.delete, systemImage: "trash")
+                                    }
+                                }
+                            }
+                    }
+                } header: {
+                    HStack(spacing: 6) {
+                        Text(section.key)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Calendar.current.isDateInToday(section.date) ? JarvisTheme.accent : JarvisTheme.textPrimary)
+                        if Calendar.current.isDateInToday(section.date) {
+                            Circle()
+                                .fill(JarvisTheme.accent)
+                                .frame(width: 6, height: 6)
+                        }
+                    }
+                    .textCase(nil)
                 }
             }
-            .padding()
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+    }
+    
+    private func daySectionLabel(for date: Date) -> String {
+        let cal = Calendar.current
+        if cal.isDateInToday(date) {
+            return L10n.dateToday + " — " + date.formatted(.dateTime.day().month(.wide))
+        } else if cal.isDateInTomorrow(date) {
+            return L10n.dateTomorrow + " — " + date.formatted(.dateTime.day().month(.wide))
+        } else {
+            return date.formatted(.dateTime.weekday(.wide).day().month(.wide)).localizedCapitalized
         }
     }
     
@@ -111,13 +161,22 @@ struct CalendarView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .automatic) {
-            if isAuthorized && errorMessage == nil {
-                Button { Task { await loadEvents() } } label: {
-                    if isLoading { ProgressView() }
-                    else { Image(systemName: "arrow.clockwise") }
+            if isAuthorized || calSync.isAuthorizedForCalendar {
+                HStack(spacing: 12) {
+                    if isAuthorized {
+                        Button { showCreateEvent = true } label: {
+                            Image(systemName: "plus")
+                        }
+                        .bounceOnTap()
+                    }
+                    
+                    Button { Task { await loadEvents() } } label: {
+                        if isLoading { ProgressView() }
+                        else { Image(systemName: "arrow.clockwise") }
+                    }
+                    .bounceOnTap()
+                    .disabled(isLoading)
                 }
-                .bounceOnTap()
-                .disabled(isLoading)
             }
         }
     }
@@ -125,56 +184,265 @@ struct CalendarView: View {
     private func checkAuth() async {
         checkingAuth = true
         defer { checkingAuth = false }
+        
         do {
             isAuthorized = try await AuthService.shared.checkAuth()
-            if isAuthorized { await loadEvents() }
         } catch {
             isAuthorized = false
-            errorMessage = "\(L10n.errorGeneric): \(error.localizedDescription)"
         }
+        
+        if !calSync.isAuthorizedForCalendar {
+            let granted = await calSync.requestAccess()
+            if granted {
+                EventKitService.shared.checkAuthorization()
+                EventKitService.shared.loadCalendars()
+                EventKitService.shared.syncEventsToStore()
+            }
+        }
+        
+        await loadEvents()
     }
     
     private func loadEvents() async {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
+        
+        var merged: [CalendarEventItem] = []
+        
+        // Google Calendar events
+        if isAuthorized {
+            do {
+                let dtos = try await CalendarService.shared.fetchEventsAsDTO(daysAhead: 30)
+                merged += dtos.map { dto in
+                    CalendarEventItem(
+                        id: dto.id,
+                        title: dto.title,
+                        notes: dto.notes,
+                        startDate: dto.startDate,
+                        endDate: dto.endDate,
+                        location: dto.location,
+                        isAllDay: dto.isAllDay ?? false,
+                        source: .google
+                    )
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+        
+        // Local EventKit events
+        if calSync.isAuthorizedForCalendar {
+            let local = calSync.localEvents(daysAhead: 30)
+            merged += local.map { ek in
+                CalendarEventItem(
+                    id: "ek_\(ek.eventIdentifier ?? UUID().uuidString)",
+                    title: ek.title ?? L10n.noSubject,
+                    notes: ek.notes,
+                    startDate: ek.startDate,
+                    endDate: ek.endDate,
+                    location: ek.location,
+                    isAllDay: ek.isAllDay,
+                    source: .local
+                )
+            }
+        }
+        
+        events = merged.sorted { $0.startDate < $1.startDate }
+    }
+    
+    private func deleteGoogleEvent(_ event: CalendarEventItem) async {
         do {
-            let dtos = try await CalendarService.shared.fetchEventsAsDTO()
-            events = dtos.map { CalendarEventItem(id: $0.id, title: $0.title, notes: $0.notes, startDate: $0.startDate) }
+            try await CalendarService.shared.deleteEvent(id: event.id)
+            events.removeAll { $0.id == event.id }
         } catch {
             errorMessage = error.localizedDescription
-            events = []
         }
     }
 }
 
+// MARK: - Model
+
 struct CalendarEventItem: Identifiable {
+    enum Source { case google, local }
     let id: String
     let title: String
     let notes: String?
     let startDate: Date
+    let endDate: Date?
+    let location: String?
+    let isAllDay: Bool
+    var source: Source = .google
 }
+
+// MARK: - Event Row
 
 struct CalendarEventRow: View {
     let event: CalendarEventItem
     
+    private var sourceColor: Color {
+        event.source == .google ? .blue : .orange
+    }
+    
+    private var timeLabel: String {
+        if event.isAllDay {
+            return L10n.allDay
+        }
+        let start = event.startDate.formatted(date: .omitted, time: .shortened)
+        if let end = event.endDate {
+            let endStr = end.formatted(date: .omitted, time: .shortened)
+            return "\(start) — \(endStr)"
+        }
+        return start
+    }
+    
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(event.title)
-                .font(.headline)
-                .foregroundStyle(JarvisTheme.textPrimary)
-            Text(event.startDate.formatted(date: .abbreviated, time: .shortened))
-                .font(.subheadline)
-                .foregroundStyle(JarvisTheme.textSecondary)
-            if let notes = event.notes, !notes.isEmpty {
-                Text(String(notes.prefix(80)).replacingOccurrences(of: "<br>", with: " ").replacingOccurrences(of: "<br/>", with: " "))
-                    .font(.caption)
-                    .foregroundStyle(JarvisTheme.textSecondary)
+        HStack(alignment: .top, spacing: 12) {
+            // Time column
+            VStack(alignment: .trailing, spacing: 2) {
+                if event.isAllDay {
+                    Text(L10n.allDay)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(sourceColor)
+                } else {
+                    Text(event.startDate.formatted(date: .omitted, time: .shortened))
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(JarvisTheme.textPrimary)
+                    if let end = event.endDate {
+                        Text(end.formatted(date: .omitted, time: .shortened))
+                            .font(.caption)
+                            .foregroundStyle(JarvisTheme.textSecondary)
+                    }
+                }
+            }
+            .frame(width: 56, alignment: .trailing)
+            
+            // Color bar
+            RoundedRectangle(cornerRadius: 2)
+                .fill(sourceColor)
+                .frame(width: 4)
+            
+            // Content
+            VStack(alignment: .leading, spacing: 4) {
+                Text(event.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(JarvisTheme.textPrimary)
                     .lineLimit(2)
+                
+                HStack(spacing: 8) {
+                    // Source badge
+                    Text(event.source == .google ? "Google" : L10n.calendarTitle)
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(sourceColor.opacity(0.12))
+                        .clipShape(Capsule())
+                        .foregroundStyle(sourceColor)
+                    
+                    if event.isAllDay {
+                        Text(L10n.allDay)
+                            .font(.caption2)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.purple.opacity(0.12))
+                            .clipShape(Capsule())
+                            .foregroundStyle(.purple)
+                    }
+                }
+                
+                if let location = event.location, !location.isEmpty {
+                    Label(location, systemImage: "mappin.and.ellipse")
+                        .font(.caption)
+                        .foregroundStyle(JarvisTheme.textSecondary)
+                        .lineLimit(1)
+                }
+                
+                if let notes = event.notes, !notes.isEmpty {
+                    Text(String(notes.prefix(100))
+                        .replacingOccurrences(of: "<br>", with: " ")
+                        .replacingOccurrences(of: "<br/>", with: " "))
+                        .font(.caption)
+                        .foregroundStyle(JarvisTheme.textSecondary)
+                        .lineLimit(2)
+                }
+            }
+            
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 6)
+    }
+}
+
+// MARK: - Create Event Sheet
+
+struct CreateEventSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var title = ""
+    @State private var description = ""
+    @State private var startDate = Date()
+    @State private var endDate = Date().addingTimeInterval(3600)
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+    let onCreated: () async -> Void
+    
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField(L10n.eventTitle, text: $title)
+                    TextField(L10n.eventDescription, text: $description)
+                }
+                
+                Section {
+                    DatePicker(L10n.eventStart, selection: $startDate)
+                    DatePicker(L10n.eventEnd, selection: $endDate)
+                }
+                
+                if let err = errorMessage {
+                    Section {
+                        Text(err)
+                            .foregroundStyle(.red)
+                            .font(.caption)
+                    }
+                }
+            }
+            .navigationTitle(L10n.newEvent)
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(L10n.cancel) { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if isSaving {
+                        ProgressView()
+                    } else {
+                        Button(L10n.createEvent) { Task { await save() } }
+                            .disabled(title.isEmpty)
+                    }
+                }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 4)
+    }
+    
+    private func save() async {
+        isSaving = true
+        errorMessage = nil
+        do {
+            _ = try await CalendarService.shared.createEvent(
+                summary: title,
+                start: startDate,
+                end: endDate,
+                description: description,
+                timeZone: TimeZone.current.identifier
+            )
+            await onCreated()
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isSaving = false
     }
 }
 #endif

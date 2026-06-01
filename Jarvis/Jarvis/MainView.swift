@@ -13,12 +13,12 @@ struct MainView: View {
                 NavigationLink {
                     WatchPlannerView(store: store)
                 } label: {
-                    Label("Plan", systemImage: "checklist")
+                    Label(L10n.tabToday, systemImage: "checklist")
                 }
                 NavigationLink {
                     WatchWellnessView(wellness: wellness)
                 } label: {
-                    Label("Health", systemImage: "heart.text.square")
+                    Label(L10n.healthTitle, systemImage: "heart.text.square")
                 }
             }
             .navigationTitle("Jarvis")
@@ -38,7 +38,7 @@ struct WatchPlannerView: View {
                     Calendar.current.isDateInToday($0.date)
                 }
                 if todayTasks.isEmpty {
-                    Text("No tasks today")
+                    Text(L10n.noTasksToday)
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(todayTasks) { task in
@@ -48,7 +48,7 @@ struct WatchPlannerView: View {
                     }
                 }
             } header: {
-                Text("Today")
+                Text(L10n.tabToday)
             }
 
             if !store.inboxTasks.isEmpty {
@@ -63,11 +63,11 @@ struct WatchPlannerView: View {
                         }
                     }
                 } header: {
-                    Text("Inbox")
+                    Text(L10n.tabInbox)
                 }
             }
         }
-        .navigationTitle("Plan")
+        .navigationTitle(L10n.tabToday)
     }
 }
 
@@ -120,7 +120,7 @@ struct WatchWellnessView: View {
                         .fontWeight(.semibold)
                 }
             } header: {
-                Text("Today")
+                Text(L10n.tabToday)
             }
 
             if let lastSleep = wellness.sleep.last {
@@ -139,7 +139,7 @@ struct WatchWellnessView: View {
                         Text("\(startStr) – \(endStr)")
                     }
                 } header: {
-                    Text("Sleep")
+                    Text(L10n.sleep)
                 }
             }
 
@@ -155,9 +155,9 @@ struct WatchWellnessView: View {
                         .fontWeight(.semibold)
                 }
             } header: {
-                Text("Activity")
+                Text(L10n.activity)
             }
         }
-        .navigationTitle("Health")
+        .navigationTitle(L10n.healthTitle)
     }
 }

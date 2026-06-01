@@ -46,10 +46,14 @@ struct LogEntry: Identifiable, Sendable {
     let function: String
     let line: Int
     
-    var formattedTimestamp: String {
+    private static let timestampFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss.SSS"
-        return formatter.string(from: timestamp)
+        return formatter
+    }()
+    
+    var formattedTimestamp: String {
+        Self.timestampFormatter.string(from: timestamp)
     }
     
     var shortFile: String {

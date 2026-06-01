@@ -133,26 +133,56 @@ class GmailService:
             userId="me", q=q, maxResults=max_results
         ).execute()
 
-        messages = []
-        for msg_stub in result.get("messages", []):
-            try:
-                msg = self.service.users().messages().get(
-                    userId="me", id=msg_stub["id"], format="metadata",
-                    metadataHeaders=["Subject", "From", "Date"],
-                ).execute()
-                headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
-                messages.append({
-                    "id": msg["id"],
-                    "threadId": msg.get("threadId"),
+        msg_stubs = result.get("messages", [])
+        if not msg_stubs:
+            return []
+
+        # Batch request — fetch all messages in parallel via Gmail batch API
+        messages = [None] * len(msg_stubs)
+
+        def _make_callback(idx):
+            def _cb(request_id, response, exception):
+                if exception:
+                    log.warning(f"Batch fetch error for message: {exception}")
+                    return
+                headers = {h["name"]: h["value"] for h in response.get("payload", {}).get("headers", [])}
+                messages[idx] = {
+                    "id": response["id"],
+                    "threadId": response.get("threadId"),
                     "subject": headers.get("Subject", "(без темы)"),
                     "from": headers.get("From", ""),
                     "date": headers.get("Date", ""),
-                    "snippet": msg.get("snippet", ""),
-                    "isUnread": "UNREAD" in msg.get("labelIds", []),
-                })
-            except Exception as e:
-                log.warning(f"Failed to fetch message {msg_stub['id']}: {e}")
-        return messages
+                    "snippet": response.get("snippet", ""),
+                    "isUnread": "UNREAD" in response.get("labelIds", []),
+                }
+            return _cb
+
+        batch = self.service.new_batch_http_request()
+        for i, msg_stub in enumerate(msg_stubs):
+            batch.add(
+                self.service.users().messages().get(
+                    userId="me", id=msg_stub["id"], format="metadata",
+                    metadataHeaders=["Subject", "From", "Date"],
+                ),
+                callback=_make_callback(i),
+            )
+        batch.execute()
+
+        return [m for m in messages if m is not None]
+
+    def _extract_text_from_parts(self, parts: list) -> str:
+        """Recursively extract text/plain from MIME parts tree."""
+        for part in parts:
+            mime = part.get("mimeType", "")
+            if mime == "text/plain":
+                data = part.get("body", {}).get("data", "")
+                if data:
+                    return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+            elif mime.startswith("multipart/") and "parts" in part:
+                result = self._extract_text_from_parts(part["parts"])
+                if result:
+                    return result
+        return ""
 
     def get_message(self, message_id: str) -> dict:
         msg = self.service.users().messages().get(
@@ -160,16 +190,11 @@ class GmailService:
         ).execute()
         headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
 
-        # Extract body
+        # Extract body (recursively traverse MIME parts)
         body_text = ""
         payload = msg.get("payload", {})
         if "parts" in payload:
-            for part in payload["parts"]:
-                if part.get("mimeType") == "text/plain":
-                    data = part.get("body", {}).get("data", "")
-                    if data:
-                        body_text = base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
-                    break
+            body_text = self._extract_text_from_parts(payload["parts"])
         elif payload.get("body", {}).get("data"):
             body_text = base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", errors="replace")
 
@@ -204,11 +229,19 @@ class GmailService:
             subject = f"Re: {subject}"
         from_addr = original.get("from", "")
 
+        # Get the real RFC 2822 Message-ID from the original for proper threading
+        orig_msg = self.service.users().messages().get(
+            userId="me", id=message_id, format="metadata",
+            metadataHeaders=["Message-ID"]
+        ).execute()
+        orig_headers = {h["name"]: h["value"] for h in orig_msg.get("payload", {}).get("headers", [])}
+        rfc_message_id = orig_headers.get("Message-ID", f"<{message_id}@mail.gmail.com>")
+
         message = MIMEText(body)
         message["to"] = from_addr
         message["subject"] = subject
-        message["In-Reply-To"] = message_id
-        message["References"] = message_id
+        message["In-Reply-To"] = rfc_message_id
+        message["References"] = rfc_message_id
 
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
         result = self.service.users().messages().send(
@@ -217,9 +250,22 @@ class GmailService:
         log.info(f"Replied to {message_id}")
         return {"id": result.get("id"), "threadId": result.get("threadId")}
 
+    def trash_message(self, message_id: str):
+        self.service.users().messages().trash(
+            userId="me", id=message_id,
+        ).execute()
+        log.info(f"Trashed message: {message_id}")
+
     def archive_message(self, message_id: str):
         self.service.users().messages().modify(
             userId="me", id=message_id,
             body={"removeLabelIds": ["INBOX"]},
         ).execute()
         log.info(f"Archived message: {message_id}")
+
+    def mark_as_read(self, message_id: str):
+        self.service.users().messages().modify(
+            userId="me", id=message_id,
+            body={"removeLabelIds": ["UNREAD"]},
+        ).execute()
+        log.info(f"Marked as read: {message_id}")

@@ -133,4 +133,13 @@ final class CalendarSyncService: ObservableObject {
         let predicate = eventStore.predicateForEvents(withStart: start, end: end, calendars: nil)
         return eventStore.events(matching: predicate)
     }
+
+    /// Все события из локального календаря за ближайшие N дней (по умолчанию 30).
+    func localEvents(daysAhead: Int = 30) -> [EKEvent] {
+        guard hasEventAccess else { return [] }
+        let now = Calendar.current.startOfDay(for: Date())
+        let end = Calendar.current.date(byAdding: .day, value: daysAhead, to: now) ?? now
+        let predicate = eventStore.predicateForEvents(withStart: now, end: end, calendars: nil)
+        return eventStore.events(matching: predicate).sorted { $0.startDate < $1.startDate }
+    }
 }

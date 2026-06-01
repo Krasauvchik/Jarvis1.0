@@ -7,7 +7,7 @@ import Combine
 /// Сценарий: В календарь прилетает "Заведение нового соевого соуса" с участниками →
 /// MeetingBriefingService:
 /// 1. Извлекает название, участников, описание встречи
-/// 2. Через AIContextEngine ищет ВСЕ переписки (Telegram, WhatsApp, email) за последний месяц
+/// 2. Через AIContextEngine ищет ВСЕ переписки (Telegram, email) за последний месяц
 /// 3. Формирует структурированную выдержку через LLM
 /// 4. Сохраняет в заметках задачи/встречи
 
@@ -19,9 +19,22 @@ final class MeetingBriefingService: ObservableObject {
     @Published var lastBriefing: MeetingBriefing?
     @Published var error: String?
     
+    /// Кэш выдержек по ключу (title + date). Хранится в памяти на время сессии.
+    @Published var cachedBriefings: [String: MeetingBriefing] = [:]
+    
     private let contextEngine = AIContextEngine.shared
     
     private init() {}
+    
+    /// Возвращает ключ кэша для события.
+    func cacheKey(title: String, date: Date) -> String {
+        "\(title.lowercased())_\(Int(date.timeIntervalSince1970 / 3600))"
+    }
+    
+    /// Возвращает кэшированную выдержку, если есть.
+    func cachedBriefing(for title: String, date: Date) -> MeetingBriefing? {
+        cachedBriefings[cacheKey(title: title, date: date)]
+    }
     
     // MARK: - Models
     
@@ -66,6 +79,13 @@ final class MeetingBriefingService: ObservableObject {
     
     /// Главная точка входа: даём встречу — получаем полный брифинг.
     func generateBriefing(for meeting: MeetingInfo, tasks: [PlannerTask] = []) async -> MeetingBriefing? {
+        // Check cache first
+        let key = cacheKey(title: meeting.title, date: meeting.date)
+        if let cached = cachedBriefings[key] {
+            lastBriefing = cached
+            return cached
+        }
+        
         isGenerating = true
         error = nil
         defer { isGenerating = false }
@@ -101,19 +121,67 @@ final class MeetingBriefingService: ObservableObject {
             keyTopics: extractKeyTopics(from: briefingText),
             actionItems: extractActionItems(from: briefingText),
             relatedEmails: allResults.flatMap(\.mailMatches).count,
-            relatedMessages: allResults.flatMap(\.telegramMatches).count + allResults.flatMap(\.whatsappMatches).count,
+            relatedMessages: allResults.flatMap(\.telegramMatches).count,
             relatedTasks: allResults.flatMap(\.taskMatches).count,
             generatedAt: Date()
         )
         
         lastBriefing = briefing
+        cachedBriefings[key] = briefing
+        // Evict oldest entries if cache grows too large
+        if cachedBriefings.count > 20 {
+            let sorted = cachedBriefings.sorted { $0.value.generatedAt < $1.value.generatedAt }
+            for entry in sorted.prefix(cachedBriefings.count - 15) {
+                cachedBriefings.removeValue(forKey: entry.key)
+            }
+        }
         return briefing
+    }
+    
+    /// Создаёт MeetingInfo из SystemCalendarEvent.
+    func meetingInfo(from event: SystemCalendarEvent) -> MeetingInfo {
+        MeetingInfo(
+            title: event.title,
+            date: event.startDate,
+            participants: event.attendees,
+            description: [event.location, event.notes].compactMap { $0 }.joined(separator: "\n")
+        )
+    }
+    
+    /// Генерирует брифинг для системного события календаря.
+    func generateBriefing(for event: SystemCalendarEvent, allTasks: [PlannerTask] = []) async -> MeetingBriefing? {
+        let info = meetingInfo(from: event)
+        return await generateBriefing(for: info, tasks: allTasks)
     }
     
     /// Генерирует брифинг для задачи (если она выглядит как встреча).
     func generateBriefing(for task: PlannerTask, allTasks: [PlannerTask] = []) async -> MeetingBriefing? {
         let meetingInfo = MeetingInfo(from: task)
         return await generateBriefing(for: meetingInfo, tasks: allTasks)
+    }
+    
+    // MARK: - Auto-Briefing for Upcoming Events
+    
+    /// Автоматически генерирует выдержки для ближайших событий календаря (в пределах lookAheadHours).
+    /// Пропускает события, для которых уже есть кэш, и all-day события.
+    func prefetchBriefings(lookAheadHours: Int = 4) async {
+        let events = EventKitService.shared.systemEvents
+        let now = Date()
+        let cutoff = now.addingTimeInterval(TimeInterval(lookAheadHours * 3600))
+        
+        let upcoming = events.filter { event in
+            !event.isAllDay &&
+            event.startDate > now &&
+            event.startDate <= cutoff &&
+            cachedBriefing(for: event.title, date: event.startDate) == nil
+        }
+        
+        guard !upcoming.isEmpty else { return }
+        
+        let tasks = PlannerStore.shared.tasks
+        for event in upcoming.prefix(3) { // limit concurrent to avoid overloading
+            _ = await generateBriefing(for: event, allTasks: tasks)
+        }
     }
     
     // MARK: - Search Query Building
@@ -165,11 +233,12 @@ final class MeetingBriefingService: ObservableObject {
         _ results: [AIContextEngine.CrossSourceSearchResult],
         meeting: MeetingInfo
     ) -> String {
+        let cleanDesc = Self.stripHTMLSimple(meeting.description)
         var context = """
         📋 ВСТРЕЧА: \(meeting.title)
         📅 Дата: \(meeting.date.formatted(date: .abbreviated, time: .shortened))
         👥 Участники: \(meeting.participants.isEmpty ? "не указаны" : meeting.participants.joined(separator: ", "))
-        📝 Описание: \(meeting.description.isEmpty ? "нет" : meeting.description)
+        📝 Описание: \(cleanDesc.isEmpty ? "нет" : cleanDesc)
         
         ---
         НАЙДЕННАЯ ИНФОРМАЦИЯ ПО СВЯЗАННЫМ ИСТОЧНИКАМ:
@@ -190,24 +259,66 @@ final class MeetingBriefingService: ObservableObject {
     
     // MARK: - LLM Briefing Request
     
+    private static let briefingSystemPrompt = """
+    Ты — Jarvis, AI-ассистент для подготовки к встречам.
+    Пользователь даёт тебе информацию о встрече и связанные данные из календаря, почты, мессенджеров.
+    
+    Сделай СТРУКТУРИРОВАННУЮ ВЫДЕРЖКУ для подготовки к встрече:
+    
+    📋 СУТЬ ВСТРЕЧИ
+    (1-2 предложения: о чём встреча, кто участвует, цель)
+    
+    🔑 КЛЮЧЕВЫЕ ТЕМЫ
+    (Пронумерованный список тем, которые обсуждались / будут обсуждаться)
+    
+    📨 ИЗ ПЕРЕПИСОК
+    (Самое важное из найденных писем и сообщений — решения, договорённости, открытые вопросы)
+    
+    👥 УЧАСТНИКИ
+    (Кто что обсуждал / чего ждёт / о чём спрашивал)
+    
+    ⚡ НУЖНО ПОДГОТОВИТЬ
+    (Конкретный список: что взять, что проверить, какие решения принять)
+    
+    💡 РЕКОМЕНДАЦИЯ
+    (Твой AI-совет на основе всей собранной информации)
+    
+    Будь конкретен, упоминай имена, даты, цифры. Отвечай по-русски.
+    """
+    
     private func requestLLMBriefing(context: String, meeting: MeetingInfo) async -> String {
-        // Try backend first
-        if let result = await requestBackendBriefing(context: context, meeting: meeting) {
+        // 1. Gemini — основной (встроенный ключ, всегда работает)
+        if let result = await requestGeminiBriefing(context: context) {
             return result
         }
         
-        // Direct Ollama fallback
-        if let result = await requestOllamaBriefing(context: context) {
+        // 2. Backend — если доступен
+        if let result = await requestBackendBriefing(context: context, meeting: meeting) {
             return result
         }
         
         return L10n.briefingAIUnavailable(String(context.prefix(3000)))
     }
     
+    private func requestGeminiBriefing(context: String) async -> String? {
+        let gemini = GeminiService.shared
+        guard gemini.isConfigured else { return nil }
+        
+        if let result = await gemini.generate(
+            message: context,
+            systemPrompt: Self.briefingSystemPrompt,
+            temperature: 0.4,
+            maxTokens: 2048
+        ) {
+            let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
+        }
+        return nil
+    }
+    
     private func requestBackendBriefing(context: String, meeting: MeetingInfo) async -> String? {
         let url = Config.Endpoints.aiMeetingBriefing
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
+        var request = Config.authorizedRequest(url: url, method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 90
         
@@ -223,7 +334,7 @@ final class MeetingBriefingService: ObservableObject {
         request.httpBody = jsonData
         
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Config.urlSession.data(for: request)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return nil }
             struct Resp: Decodable { let briefing: String }
             return (try? JSONDecoder().decode(Resp.self, from: data))?.briefing
@@ -231,76 +342,6 @@ final class MeetingBriefingService: ObservableObject {
             Logger.shared.warning("MeetingBriefing backend error: \(error.localizedDescription)")
             return nil
         }
-    }
-    
-    private func requestOllamaBriefing(context: String) async -> String? {
-        let modelName = UserDefaults.standard.string(forKey: Config.Storage.ollamaModelKey) ?? Config.Ollama.defaultModelName
-        let url = Config.Endpoints.ollamaBase.appendingPathComponent("api/chat")
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 90
-        
-        let systemPrompt = """
-        Ты — Jarvis, AI-ассистент для подготовки к встречам.
-        Пользователь даёт тебе информацию о встрече и связанные данные из календаря, почты, мессенджеров.
-        
-        Сделай СТРУКТУРИРОВАННУЮ ВЫДЕРЖКУ для подготовки к встрече:
-        
-        📋 СУТЬ ВСТРЕЧИ
-        (1-2 предложения: о чём встреча, кто участвует, цель)
-        
-        🔑 КЛЮЧЕВЫЕ ТЕМЫ
-        (Пронумерованный список тем, которые обсуждались / будут обсуждаться)
-        
-        📨 ИЗ ПЕРЕПИСОК
-        (Самое важное из найденных писем и сообщений — решения, договорённости, открытые вопросы)
-        
-        👥 УЧАСТНИКИ
-        (Кто что обсуждал / чего ждёт / о чём спрашивал)
-        
-        ⚡ НУЖНО ПОДГОТОВИТЬ
-        (Конкретный список: что взять, что проверить, какие решения принять)
-        
-        💡 РЕКОМЕНДАЦИЯ
-        (Твой AI-совет на основе всей собранной информации)
-        
-        Будь конкретен, упоминай имена, даты, цифры. Отвечай по-русски.
-        """
-        
-        struct OllamaReq: Encodable {
-            let model: String
-            let messages: [Msg]
-            let stream: Bool
-            struct Msg: Encodable { let role: String; let content: String }
-        }
-        struct OllamaResp: Decodable {
-            let message: RMsg?
-            struct RMsg: Decodable { let content: String }
-        }
-        
-        let payload = OllamaReq(
-            model: modelName,
-            messages: [
-                .init(role: "system", content: systemPrompt),
-                .init(role: "user", content: context),
-            ],
-            stream: false
-        )
-        
-        request.httpBody = try? JSONEncoder().encode(payload)
-        
-        do {
-            let (data, _) = try await URLSession.shared.data(for: request)
-            if let decoded = try? JSONDecoder().decode(OllamaResp.self, from: data),
-               let text = decoded.message?.content.trimmingCharacters(in: .whitespacesAndNewlines),
-               !text.isEmpty {
-                return text
-            }
-        } catch {
-            Logger.shared.warning("MeetingBriefing Ollama error: \(error.localizedDescription)")
-        }
-        return nil
     }
     
     // MARK: - Text Parsing Helpers
@@ -344,5 +385,21 @@ final class MeetingBriefingService: ObservableObject {
         }
         
         return items
+    }
+    
+    /// Simple HTML stripping for meeting descriptions.
+    private static func stripHTMLSimple(_ html: String) -> String {
+        guard html.contains("<") || html.contains("&") else { return html }
+        var result = html.replacingOccurrences(of: "<br\\s*/?>", with: "\n", options: .regularExpression)
+        result = result.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        let entities: [(String, String)] = [
+            ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
+            ("&quot;", "\""), ("&#39;", "'"), ("&nbsp;", " ")
+        ]
+        for (entity, char) in entities {
+            result = result.replacingOccurrences(of: entity, with: char)
+        }
+        result = result.replacingOccurrences(of: "\\n{3,}", with: "\n\n", options: .regularExpression)
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

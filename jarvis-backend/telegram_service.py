@@ -6,17 +6,17 @@ The user authenticates with their own Telegram account (phone + code + optional 
 They then select SPECIFIC chats to monitor — Jarvis only reads those.
 
 Setup:
-1. Get api_id + api_hash from https://my.telegram.org/apps
-2. POST /integrations/telegram/configure  {api_id, api_hash, phone}
-3. POST /integrations/telegram/auth/start → sends code to phone
-4. POST /integrations/telegram/auth/complete {code, phone_code_hash}
-5. GET  /integrations/telegram/chats → list available chats
-6. POST /integrations/telegram/chats/select {chat_ids: [...]}
-7. GET  /integrations/telegram/digest → summarized from selected chats
+0. POST /integrations/telegram/api-credentials {api_id, api_hash} → save API keys (one-time)
+1. POST /integrations/telegram/auth/send-code  {phone} → sends code
+2. POST /integrations/telegram/auth/complete {code, phone_code_hash}
+3. GET  /integrations/telegram/chats → list available chats
+4. POST /integrations/telegram/chats/select {chat_ids: [...]}
+5. GET  /integrations/telegram/digest → summarized from selected chats
 """
 
 import json
 import logging
+import os
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -26,6 +26,37 @@ log = logging.getLogger("jarvis.telegram")
 
 CONFIG_PATH = Path(__file__).parent / "messenger_config.json"
 SESSION_NAME = str(Path(__file__).parent / "telegram_session")
+
+# Default Telegram API credentials (registered at https://my.telegram.org/apps).
+# Can be overridden via env vars TELEGRAM_API_ID / TELEGRAM_API_HASH or config file.
+_DEFAULT_API_ID = 38466044
+_DEFAULT_API_HASH = "bedb5c2b621622cb0deaa63ba28845a2"
+
+
+def _get_api_credentials(config: dict) -> tuple:
+    """Resolve Telegram API credentials: env vars → config file → built-in defaults.
+    
+    Returns (api_id: int, api_hash: str).
+    """
+    # 1. Environment variables take priority
+    env_id = os.getenv("TELEGRAM_API_ID", "")
+    env_hash = os.getenv("TELEGRAM_API_HASH", "")
+    if env_id and env_hash:
+        try:
+            return int(env_id), env_hash
+        except ValueError:
+            pass
+    # 2. From config file
+    tg = config.get("telegram", {})
+    cfg_id = tg.get("api_id")
+    cfg_hash = tg.get("api_hash", "")
+    if cfg_id and cfg_hash:
+        try:
+            return int(cfg_id), str(cfg_hash)
+        except (ValueError, TypeError):
+            pass
+    # 3. Built-in defaults
+    return _DEFAULT_API_ID, _DEFAULT_API_HASH
 
 
 def _load_config() -> dict:
@@ -38,15 +69,7 @@ def _load_config() -> dict:
             pass
     return {
         "telegram": {
-            "api_id": None,
-            "api_hash": None,
             "phone": None,
-            "selected_chats": [],
-        },
-        "whatsapp": {
-            "provider": "green-api",
-            "instance_id": None,
-            "api_token": None,
             "selected_chats": [],
         },
     }
@@ -72,7 +95,12 @@ class TelegramService:
     @property
     def is_configured(self) -> bool:
         tg = self._config.get("telegram", {})
-        return bool(tg.get("api_id") and tg.get("api_hash") and tg.get("phone"))
+        return bool(tg.get("phone"))
+
+    @property
+    def api_credentials_configured(self) -> bool:
+        api_id, api_hash = _get_api_credentials(self._config)
+        return bool(api_id and api_hash)
 
     @property
     def selected_chat_ids(self) -> List[int]:
@@ -82,7 +110,9 @@ class TelegramService:
     def status(self) -> dict:
         tg = self._config.get("telegram", {})
         session_file = Path(SESSION_NAME + ".session")
+        api_id, _ = _get_api_credentials(self._config)
         return {
+            "api_configured": bool(api_id),
             "configured": self.is_configured,
             "has_session": session_file.exists(),
             "selected_chats_count": len(self.selected_chat_ids),
@@ -90,14 +120,25 @@ class TelegramService:
         }
 
     # ------------------------------------------------------------------
-    # Configuration
+    # API Credentials (one-time setup)
     # ------------------------------------------------------------------
 
-    def configure(self, api_id: int, api_hash: str, phone: str):
-        """Save Telegram API credentials."""
+    def save_api_credentials(self, api_id: int, api_hash: str) -> dict:
+        """Save Telegram API credentials to config (one-time setup)."""
         self._config.setdefault("telegram", {})
         self._config["telegram"]["api_id"] = api_id
         self._config["telegram"]["api_hash"] = api_hash
+        _save_config(self._config)
+        log.info("Telegram API credentials saved")
+        return {"status": "ok"}
+
+    # ------------------------------------------------------------------
+    # Configuration
+    # ------------------------------------------------------------------
+
+    def configure(self, phone: str):
+        """Save phone number for Telegram auth."""
+        self._config.setdefault("telegram", {})
         self._config["telegram"]["phone"] = phone
         _save_config(self._config)
         log.info(f"Telegram configured for phone: {phone}")
@@ -106,17 +147,19 @@ class TelegramService:
     # Authentication
     # ------------------------------------------------------------------
 
-    async def start_auth(self) -> dict:
-        """Start authentication — sends code to the user's phone."""
-        if not self.is_configured:
-            return {"status": "error", "error": "Not configured. Call /configure first."}
+    async def send_code(self, phone: str) -> dict:
+        """Configure phone and send verification code in one step."""
+        api_id, api_hash = _get_api_credentials(self._config)
+        if not api_id or not api_hash:
+            return {"status": "error", "error": "Telegram API credentials not configured. Set them in Settings first."}
+
+        self.configure(phone)
 
         try:
             from telethon import TelegramClient
 
-            tg = self._config["telegram"]
             self._client = TelegramClient(
-                SESSION_NAME, int(tg["api_id"]), tg["api_hash"]
+                SESSION_NAME, api_id, api_hash
             )
             await self._client.connect()
 
@@ -127,7 +170,7 @@ class TelegramService:
                     "user": me.first_name if me else "User",
                 }
 
-            result = await self._client.send_code_request(tg["phone"])
+            result = await self._client.send_code_request(phone)
             return {"status": "code_sent", "phone_code_hash": result.phone_code_hash}
 
         except Exception as e:
@@ -143,9 +186,9 @@ class TelegramService:
             from telethon.errors import SessionPasswordNeededError
 
             if not self._client:
-                tg = self._config["telegram"]
+                api_id, api_hash = _get_api_credentials(self._config)
                 self._client = TelegramClient(
-                    SESSION_NAME, int(tg["api_id"]), tg["api_hash"]
+                    SESSION_NAME, api_id, api_hash
                 )
                 await self._client.connect()
 
@@ -183,11 +226,15 @@ class TelegramService:
         from telethon import TelegramClient
 
         tg = self._config.get("telegram", {})
-        if not tg.get("api_id"):
+        if not tg.get("phone"):
+            return None
+
+        api_id, api_hash = _get_api_credentials(self._config)
+        if not api_id or not api_hash:
             return None
 
         self._client = TelegramClient(
-            SESSION_NAME, int(tg["api_id"]), tg["api_hash"]
+            SESSION_NAME, api_id, api_hash
         )
         await self._client.connect()
 
@@ -229,6 +276,46 @@ class TelegramService:
                     "selected": d.id in self.selected_chat_ids,
                 }
             )
+
+        return chats
+
+    async def search_chats(self, query: str, limit: int = 50) -> List[Dict]:
+        """Search user's dialogs by title/name. Returns matching chats."""
+        client = await self._get_client()
+        if not client:
+            return []
+
+        from telethon.tl.types import Channel, Chat, User
+
+        # Fetch a large batch of dialogs and filter locally
+        dialogs = await client.get_dialogs(limit=300)
+        query_lower = query.lower()
+        chats = []
+        for d in dialogs:
+            title = d.title or d.name or ""
+            if query_lower not in title.lower():
+                continue
+
+            entity = d.entity
+            chat_type = "unknown"
+            if isinstance(entity, User):
+                chat_type = "private"
+            elif isinstance(entity, Chat):
+                chat_type = "group"
+            elif isinstance(entity, Channel):
+                chat_type = "channel" if entity.broadcast else "supergroup"
+
+            chats.append(
+                {
+                    "id": d.id,
+                    "title": title or "Unknown",
+                    "type": chat_type,
+                    "unread_count": d.unread_count,
+                    "selected": d.id in self.selected_chat_ids,
+                }
+            )
+            if len(chats) >= limit:
+                break
 
         return chats
 
@@ -318,6 +405,66 @@ class TelegramService:
             lines.append("")
 
         return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Resolve Peer (username / phone / chat_id → entity)
+    # ------------------------------------------------------------------
+
+    async def resolve_peer(self, handle: str):
+        """Resolve a username, phone, or numeric chat ID to a Telethon entity.
+
+        Accepts:
+          - "@username"
+          - "+79001234567"
+          - "123456789" (numeric chat ID)
+        Returns entity or None.
+        """
+        client = await self._get_client()
+        if not client:
+            return None
+
+        try:
+            # Numeric chat ID
+            if handle.lstrip("-").isdigit():
+                return await client.get_entity(int(handle))
+            # Username or phone
+            return await client.get_entity(handle)
+        except Exception as e:
+            log.warning(f"Could not resolve peer '{handle}': {e}")
+            return None
+
+    # ------------------------------------------------------------------
+    # Send Message
+    # ------------------------------------------------------------------
+
+    async def send_message(self, handle: str, text: str) -> dict:
+        """Send a text message to a Telegram user/chat.
+
+        Args:
+            handle: username (@user), phone (+79...), or numeric chat_id.
+            text: message body (supports Telegram markdown).
+
+        Returns dict with status, message_id, etc.
+        """
+        client = await self._get_client()
+        if not client:
+            return {"status": "error", "error": "Telegram not authenticated"}
+
+        entity = await self.resolve_peer(handle)
+        if not entity:
+            return {"status": "error", "error": f"Could not find user: {handle}"}
+
+        try:
+            msg = await client.send_message(entity, text)
+            log.info(f"Telegram: sent message to {handle}, msg_id={msg.id}")
+            return {
+                "status": "sent",
+                "message_id": msg.id,
+                "chat_id": getattr(entity, "id", None),
+            }
+        except Exception as e:
+            log.error(f"Telegram send_message error for {handle}: {e}")
+            return {"status": "error", "error": str(e)}
 
     # ------------------------------------------------------------------
     # Disconnect

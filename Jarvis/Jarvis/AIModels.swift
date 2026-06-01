@@ -1,31 +1,79 @@
 import Foundation
+import SwiftUI
 
 enum AIModel: String, CaseIterable, Identifiable, Codable, Sendable {
-    case gemini
-    case heuristic
-    case ollama       // локальная модель через Ollama (как в OpenClaw)
-    case onDeviceLarge
-    case cloudGPT
+    case gemini       // Google Gemini — прямой вызов, бесплатный free tier
+    case yandexGPT    // YandexGPT — лучший русский, требует API-ключ
+    case cloudGPT     // Cloud GPT через бэкенд (OpenAI-compatible)
+    case heuristic    // Оффлайн-эвристика (без LLM)
     
     var id: String { rawValue }
     
     var displayName: String {
         switch self {
-        case .gemini: return "Gemini"
-        case .heuristic: return L10n.aiModelHeuristic
-        case .ollama: return L10n.aiModelOllamaLocal
-        case .onDeviceLarge: return L10n.aiModelOnDevice
+        case .gemini: return "Google Gemini"
+        case .yandexGPT: return "YandexGPT"
         case .cloudGPT: return "Cloud GPT"
+        case .heuristic: return L10n.aiModelHeuristic
+        }
+    }
+    
+    var descriptionText: String {
+        switch self {
+        case .gemini: return L10n.aiModelGeminiDesc
+        case .yandexGPT: return L10n.aiModelYandexDesc
+        case .cloudGPT: return L10n.aiModelCloudDesc
+        case .heuristic: return L10n.aiModelHeuristicDesc
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .gemini: return "sparkle"
+        case .yandexGPT: return "text.bubble.fill"
+        case .cloudGPT: return "cloud.fill"
+        case .heuristic: return "cpu"
+        }
+    }
+    
+    var accentColor: Color {
+        switch self {
+        case .gemini: return .blue
+        case .yandexGPT: return .red
+        case .cloudGPT: return .purple
+        case .heuristic: return .gray
+        }
+    }
+    
+    var badge: String? {
+        switch self {
+        case .gemini: return L10n.aiModelBadgeFree
+        case .yandexGPT: return "🇷🇺 \(L10n.aiModelBadgeBestRu)"
+        case .cloudGPT: return nil
+        case .heuristic: return L10n.aiModelBadgeOffline
         }
     }
     
     /// Модель работает локально / не требует облака
     var isLocal: Bool {
         switch self {
-        case .heuristic, .ollama, .onDeviceLarge: return true
-        case .gemini, .cloudGPT: return false
+        case .heuristic: return true
+        case .yandexGPT, .gemini, .cloudGPT: return false
         }
     }
+    
+    /// Нужна ли настройка (API key и т.д.) для работы
+    var needsSetup: Bool {
+        switch self {
+        case .gemini: return !GeminiService.shared.isConfigured
+        case .yandexGPT: return true  // YandexGPT removed — always needs setup
+        case .cloudGPT: return Config.apiKey == nil
+        case .heuristic: return false
+        }
+    }
+    
+    /// Провайдер полностью готов к использованию
+    var isReady: Bool { !needsSetup }
 }
 
 final class HeuristicAdapter: Sendable {
@@ -35,7 +83,7 @@ final class HeuristicAdapter: Sendable {
         let dayOffset = lower.contains("завтра") || lower.contains("tomorrow") ? 1 : 0
         var hour = 9, minute = 0
         
-        if let match = lower.range(of: #"(?:в|at)\s*(\d{1,2})(?::(\d{2}))?"#, options: .regularExpression) {
+        if let match = lower.range(of: #"(?:в|на|at)\s*(\d{1,2})(?::(\d{2}))?(?:\s*(?:утра|часов|часа|час))?"#, options: .regularExpression) {
             let numbers = String(lower[match])
                 .components(separatedBy: CharacterSet.decimalDigits.inverted)
                 .compactMap { Int($0) }
@@ -52,11 +100,16 @@ final class HeuristicAdapter: Sendable {
         guard let taskDate = calendar.date(from: components) else { return nil }
         
         var title = lower
-        for word in ["напомни", "remind me", "сегодня", "завтра", "today", "tomorrow"] {
+        for word in ["напомни", "remind me", "сегодня", "завтра", "today", "tomorrow",
+                     "поставь задачу", "создай задачу", "добавь задачу", "новая задача",
+                     "поставь", "создай", "добавь", "задачу", "задача",
+                     "утра", "вечера", "часов", "часа", "час"] {
             title = title.replacingOccurrences(of: word, with: "")
         }
         title = title
-            .replacingOccurrences(of: #"(?:в|at)\s*\d{1,2}(?::\d{2})?"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"(?:в|на|at)\s*\d{1,2}(?::\d{2})?"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"^\s*[-–—]\s*"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s*[-–—]\s*$"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         
         if title.isEmpty { title = L10n.heuristicDefaultTask }

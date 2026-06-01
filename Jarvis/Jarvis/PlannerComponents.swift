@@ -97,7 +97,7 @@ struct StructuredDateStrip: View {
     }
     
     private var daysInRange: [Date] {
-        let start = calendar.date(byAdding: .day, value: -14, to: Date())!
+        guard let start = calendar.date(byAdding: .day, value: -14, to: Date()) else { return [] }
         return (0..<60).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }
     }
 }

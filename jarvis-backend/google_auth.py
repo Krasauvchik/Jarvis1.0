@@ -1,5 +1,7 @@
 """Google OAuth и API (Calendar, Gmail)."""
+import os
 import secrets
+import stat
 from pathlib import Path
 from typing import Optional
 
@@ -18,6 +20,27 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.modify",
 ]
+
+
+def _write_token(creds) -> None:
+    """Persist OAuth credentials to disk with owner-only (0600) permissions.
+
+    The token file holds long-lived refresh tokens and client secrets; it must never
+    be world- or group-readable. We create it with a restrictive umask and tighten
+    the mode afterwards in case the file already existed.
+    """
+    data = creds.to_json()
+    # Open with O_CREAT honoring an explicit 0600 mode for newly created files.
+    fd = os.open(TOKEN_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(data)
+    finally:
+        # Enforce 0600 even if the file pre-existed with looser permissions.
+        try:
+            os.chmod(TOKEN_PATH, stat.S_IRUSR | stat.S_IWUSR)
+        except OSError:
+            pass
 
 
 def get_auth_url(redirect_uri: str) -> str:
@@ -48,8 +71,7 @@ def exchange_code_for_token(code: str, redirect_uri: str, code_verifier: str) ->
     )
     flow.fetch_token(code=code)
     credentials = flow.credentials
-    with open(TOKEN_PATH, "w") as f:
-        f.write(credentials.to_json())
+    _write_token(credentials)
     return True
 
 
@@ -60,9 +82,13 @@ def get_credentials() -> Optional[Credentials]:
 
     creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
     if creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        with open(TOKEN_PATH, "w") as f:
-            f.write(creds.to_json())
+        try:
+            creds.refresh(Request())
+            _write_token(creds)
+        except Exception:
+            return None
+    if not creds.valid:
+        return None
     return creds
 
 

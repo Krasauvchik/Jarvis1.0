@@ -6,6 +6,9 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 from pathlib import Path
 
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent / ".env")
+
 from fastapi import FastAPI, Request, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, HTMLResponse
@@ -70,16 +73,84 @@ async def _cloud_chat(messages: list, json_mode: bool = False, timeout: float = 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("jarvis")
 
-app = FastAPI(title="Jarvis Backend", version="2.0.0")
+# ---------------------------------------------------------------------------
+# Environment & security configuration
+# ---------------------------------------------------------------------------
+
+# "production" enables stricter defaults (no interactive docs, no wildcard CORS).
+JARVIS_ENV = os.getenv("JARVIS_ENV", "development").lower()
+IS_PRODUCTION = JARVIS_ENV in ("production", "prod")
+
+# Comma-separated list of allowed browser origins. In development we default to a
+# permissive wildcard for convenience; in production an explicit list is required.
+# Native app clients do not send an Origin header, so an empty list does not break them.
+_origins_env = os.getenv("JARVIS_ALLOWED_ORIGINS", "").strip()
+if _origins_env:
+    ALLOWED_ORIGINS = [o.strip() for o in _origins_env.split(",") if o.strip()]
+elif IS_PRODUCTION:
+    ALLOWED_ORIGINS = []  # Lock down: no cross-origin browser access unless configured.
+else:
+    ALLOWED_ORIGINS = ["*"]
+
+# Interactive API docs leak the full schema; keep them off in production unless opted in.
+_enable_docs = os.getenv("JARVIS_ENABLE_DOCS", "0" if IS_PRODUCTION else "1") == "1"
+
+app = FastAPI(
+    title="Jarvis Backend",
+    version="2.0.0",
+    docs_url="/docs" if _enable_docs else None,
+    redoc_url="/redoc" if _enable_docs else None,
+    openapi_url="/openapi.json" if _enable_docs else None,
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/callback")
+
+# ---------------------------------------------------------------------------
+# API Key authentication
+# ---------------------------------------------------------------------------
+
+API_KEY = os.getenv("JARVIS_API_KEY")  # Set to enable; leave empty to disable
+if IS_PRODUCTION and not API_KEY:
+    log.warning(
+        "JARVIS_API_KEY is not set in production — all endpoints are UNAUTHENTICATED. "
+        "Set JARVIS_API_KEY to protect personal data."
+    )
+
+# Paths that do NOT require an API key. Docs paths are included only when docs are enabled.
+_PUBLIC_PATHS = {"/health", "/auth/callback"}
+if _enable_docs:
+    _PUBLIC_PATHS |= {"/docs", "/openapi.json", "/redoc"}
+
+
+def _check_api_key(request: Request) -> None:
+    """Verify API key if JARVIS_API_KEY env var is set."""
+    if not API_KEY:
+        return  # No key configured — skip check
+    key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
+    if key != API_KEY:
+        raise HTTPException(403, detail="Invalid or missing API key")
+
+
+@app.middleware("http")
+async def api_key_middleware(request: Request, call_next):
+    """Global middleware: enforce the API key on all non-public endpoints.
+
+    Note: there is intentionally no localhost bypass. A loopback exemption is unsafe
+    behind a reverse proxy (where every request appears to originate from 127.0.0.1)
+    and would silently disable authentication for the entire API.
+    """
+    path = request.url.path
+    if path not in _PUBLIC_PATHS:
+        _check_api_key(request)
+    response = await call_next(request)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +173,13 @@ class CalendarEventCreate(BaseModel):
     end: str
     timeZone: str = "Europe/Moscow"
 
+class CalendarEventUpdate(BaseModel):
+    summary: str = None
+    description: str = None
+    start: str = None
+    end: str = None
+    timeZone: str = "Europe/Moscow"
+
 class GmailDraft(BaseModel):
     to: str
     subject: str
@@ -111,6 +189,15 @@ class GmailReply(BaseModel):
     message_id: str
     body: str
 
+class AISummarizePayload(BaseModel):
+    text: str
+    max_sentences: int = 3
+
+class AIGenerateReplyPayload(BaseModel):
+    original_text: str
+    instruction: str = ""
+    tone: str = "professional"
+
 
 # ---------------------------------------------------------------------------
 # Healthcheck
@@ -118,7 +205,14 @@ class GmailReply(BaseModel):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "2.0.0", "ollama": await _check_ollama()}
+    return {
+        "status": "ok",
+        "version": "2.0.0",
+        "ollama": await _check_ollama(),
+        "llm": _cloud_llm_enabled() or bool(GEMINI_API_KEY) or await _check_ollama(),
+        "gemini": bool(GEMINI_API_KEY),
+        "cloud_llm": _cloud_llm_enabled(),
+    }
 
 
 async def _check_ollama() -> bool:
@@ -221,6 +315,30 @@ async def delete_calendar_event(event_id: str):
         raise HTTPException(500, detail=str(e))
 
 
+@app.put("/calendar/events/{event_id}")
+async def update_calendar_event(event_id: str, event: CalendarEventUpdate):
+    creds = google_auth.get_credentials()
+    if not creds:
+        raise HTTPException(401, detail="Not authorized")
+    try:
+        updates = {}
+        if event.summary is not None:
+            updates["summary"] = event.summary
+        if event.description is not None:
+            updates["description"] = event.description
+        if event.start is not None:
+            updates["start"] = event.start
+        if event.end is not None:
+            updates["end"] = event.end
+        if event.timeZone:
+            updates["timeZone"] = event.timeZone
+        cal = GoogleCalendarService(creds)
+        return cal.update_event(event_id, updates)
+    except Exception as e:
+        log.error(f"Calendar update error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+
 # ---------------------------------------------------------------------------
 # MAIL — Gmail API
 # ---------------------------------------------------------------------------
@@ -254,6 +372,34 @@ async def get_mail_message(message_id: str):
         raise HTTPException(500, detail=str(e))
 
 
+@app.delete("/mail/messages/{message_id}")
+async def delete_mail_message(message_id: str):
+    creds = google_auth.get_credentials()
+    if not creds:
+        raise HTTPException(401, detail="Not authorized")
+    try:
+        gmail = GmailService(creds)
+        gmail.trash_message(message_id)
+        return {"status": "trashed", "id": message_id}
+    except Exception as e:
+        log.error(f"Gmail trash error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+
+@app.post("/mail/messages/{message_id}/read")
+async def mark_mail_read(message_id: str):
+    creds = google_auth.get_credentials()
+    if not creds:
+        raise HTTPException(401, detail="Not authorized")
+    try:
+        gmail = GmailService(creds)
+        gmail.mark_as_read(message_id)
+        return {"status": "read", "id": message_id}
+    except Exception as e:
+        log.error(f"Gmail mark read error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+
 @app.post("/mail/send")
 async def send_mail(draft: GmailDraft):
     creds = google_auth.get_credentials()
@@ -281,6 +427,190 @@ async def reply_mail(reply: GmailReply):
 
 
 # ---------------------------------------------------------------------------
+# Gemini text generation helper (used by AI endpoints + meal analysis)
+# ---------------------------------------------------------------------------
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+
+async def _gemini_chat(messages: list, json_mode: bool = False, timeout: float = 30.0) -> Optional[str]:
+    """Call Gemini API for text generation. Returns response text or None."""
+    if not GEMINI_API_KEY:
+        return None
+
+    import httpx
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+
+    # Convert messages to Gemini format
+    contents = []
+    system_text = None
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if role == "system":
+            system_text = content
+            continue
+        gemini_role = "model" if role == "assistant" else "user"
+        contents.append({"role": gemini_role, "parts": [{"text": content}]})
+
+    # If there's a system prompt, prepend it to first user message
+    if system_text and contents:
+        first_text = contents[0]["parts"][0]["text"]
+        contents[0]["parts"][0]["text"] = system_text + "\n\n" + first_text
+
+    payload = {
+        "contents": contents,
+        "generationConfig": {
+            "temperature": 0.3,
+            "maxOutputTokens": 2000,
+        },
+    }
+    if json_mode:
+        payload["generationConfig"]["responseMimeType"] = "application/json"
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.post(url, json=payload)
+            r.raise_for_status()
+            data = r.json()
+
+        text = ""
+        for candidate in data.get("candidates", []):
+            for part in candidate.get("content", {}).get("parts", []):
+                text += part.get("text", "")
+        return text.strip() if text.strip() else None
+    except Exception as e:
+        log.warning(f"Gemini text generation error: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# NUTRITION — Meal photo analysis (Gemini → heuristic fallback)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/analyze-meal")
+async def analyze_meal(request: Request):
+    """Analyze food photo: Gemini vision → heuristic fallback.
+
+    Accepts raw image bytes (Content-Type: image/*) or base64 JSON {"image": "..."}.
+    Returns: {"title": "...", "calories": N}
+    """
+    content_type = request.headers.get("content-type", "")
+    image_bytes: Optional[bytes] = None
+
+    if "json" in content_type:
+        body = await request.json()
+        import base64 as b64mod
+        raw = body.get("image", "")
+        if raw:
+            # Strip data URI prefix if present
+            if "," in raw:
+                raw = raw.split(",", 1)[1]
+            image_bytes = b64mod.b64decode(raw)
+    else:
+        image_bytes = await request.body()
+
+    if not image_bytes or len(image_bytes) < 100:
+        return {"title": "\u0411\u043b\u044e\u0434\u043e", "calories": 0}
+
+    # 1) Try Gemini Vision API
+    if GEMINI_API_KEY:
+        try:
+            result = await _analyze_meal_gemini(image_bytes)
+            if result:
+                return result
+        except Exception as e:
+            log.warning(f"Gemini meal analysis failed: {e}")
+
+    # 2) Try Cloud LLM with base64 description (text-only fallback)
+    if _cloud_llm_enabled():
+        try:
+            result = await _analyze_meal_cloud_llm(len(image_bytes))
+            if result:
+                return result
+        except Exception as e:
+            log.warning(f"Cloud LLM meal analysis failed: {e}")
+
+    # 3) Heuristic fallback based on image size
+    return _analyze_meal_heuristic(len(image_bytes))
+
+
+async def _analyze_meal_gemini(image_bytes: bytes) -> Optional[dict]:
+    """Use Google Gemini (multimodal) to analyze food photo."""
+    import httpx
+    import base64 as b64mod
+
+    b64_image = b64mod.b64encode(image_bytes).decode("utf-8")
+
+    # Detect MIME type from magic bytes
+    mime = "image/jpeg"
+    if image_bytes[:4] == b'\x89PNG':
+        mime = "image/png"
+    elif image_bytes[:4] == b'RIFF':
+        mime = "image/webp"
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": "What dish is shown in this photo? Reply with ONLY a JSON object: {\"title\": \"dish name in Russian\", \"calories\": estimated_calories_number}. Be concise. If unsure, give best estimate."},
+                {"inline_data": {"mime_type": mime, "data": b64_image}},
+            ]
+        }],
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 200},
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(url, json=payload)
+        r.raise_for_status()
+        data = r.json()
+
+    text = ""
+    for candidate in data.get("candidates", []):
+        for part in candidate.get("content", {}).get("parts", []):
+            text += part.get("text", "")
+
+    text = text.strip()
+    # Extract JSON from response
+    if "{" in text:
+        json_str = text[text.index("{"):text.rindex("}") + 1]
+        parsed = json.loads(json_str)
+        title = parsed.get("title", "\u0411\u043b\u044e\u0434\u043e")
+        calories = int(parsed.get("calories", 0))
+        log.info(f"Gemini meal: {title} ({calories} kcal)")
+        return {"title": title, "calories": calories, "source": "gemini"}
+
+    return None
+
+
+async def _analyze_meal_cloud_llm(size_bytes: int) -> Optional[dict]:
+    """Ask Cloud LLM for a rough estimate (no image, just size hint)."""
+    prompt = f"User uploaded a food photo ({size_bytes // 1024} KB). Without seeing it, give a reasonable generic meal estimate. Reply ONLY as JSON: {{\"title\": \"name\", \"calories\": number}}"
+    text = await _cloud_chat(
+        [{"role": "user", "content": prompt}],
+        json_mode=True,
+        timeout=15.0,
+    )
+    if text and "{" in text:
+        parsed = json.loads(text)
+        return {"title": parsed.get("title", "\u0411\u043b\u044e\u0434\u043e"), "calories": int(parsed.get("calories", 300)), "source": "cloud"}
+    return None
+
+
+def _analyze_meal_heuristic(size_bytes: int) -> dict:
+    """Heuristic fallback based on image file size."""
+    size_kb = size_bytes / 1024
+    if size_kb < 50:
+        return {"title": "\u041b\u0451\u0433\u043a\u0430\u044f \u0437\u0430\u043a\u0443\u0441\u043a\u0430", "calories": 150, "source": "heuristic"}
+    if size_kb < 200:
+        return {"title": "\u041e\u0441\u043d\u043e\u0432\u043d\u043e\u0435 \u0431\u043b\u044e\u0434\u043e", "calories": 400, "source": "heuristic"}
+    return {"title": "\u041e\u0431\u0438\u043b\u044c\u043d\u044b\u0439 \u043f\u0440\u0438\u0451\u043c \u043f\u0438\u0449\u0438", "calories": 600, "source": "heuristic"}
+
+
+# ---------------------------------------------------------------------------
 # LLM — AI proxy (Ollama + heuristic fallback)
 # ---------------------------------------------------------------------------
 
@@ -294,7 +624,20 @@ async def llm_plan(payload: PlanPayload):
     if cloud_result:
         return {"advice": cloud_result, "source": "cloud"}
 
-    # 2) Локальная Ollama
+    # 2) Gemini fallback
+    if GEMINI_API_KEY:
+        task_list = "\n".join(
+            f"- {'[✓]' if t.isCompleted else '[ ]'} {t.title}" + (f" ({t.notes})" if t.notes else "")
+            for t in tasks
+        )
+        gemini_result = await _gemini_chat([
+            {"role": "system", "content": "Ты — AI-планировщик. Дай 3-5 кратких практических советов по планированию дня. Отвечай по-русски."},
+            {"role": "user", "content": f"Задачи:\n{task_list}\nВсего: {total}, выполнено: {completed}"},
+        ])
+        if gemini_result:
+            return {"advice": gemini_result, "source": "gemini"}
+
+    # 3) Локальная Ollama
     ollama_result = await _ask_ollama_plan(tasks)
     if ollama_result:
         return {"advice": ollama_result, "source": "ollama"}
@@ -315,12 +658,12 @@ async def llm_plan(payload: PlanPayload):
 
 @app.post("/llm/chat")
 async def llm_chat(request: Request):
-    """Unified chat endpoint: Cloud LLM → Ollama fallback."""
+    """Unified chat endpoint: Cloud LLM → Gemini → Ollama fallback."""
     body = await request.json()
+    messages = body.get("messages") or []
 
-    # Try Cloud LLM first if configured
+    # 1) Try Cloud LLM first if configured
     if _cloud_llm_enabled():
-        messages = body.get("messages") or []
         try:
             text = await _cloud_chat(messages, json_mode=False, timeout=120.0)
             if text is not None:
@@ -328,7 +671,16 @@ async def llm_chat(request: Request):
         except Exception as e:  # noqa: BLE001
             log.error(f"Cloud LLM chat error: {e}")
 
-    # Fallback: proxy to local Ollama
+    # 2) Gemini fallback
+    if GEMINI_API_KEY:
+        try:
+            text = await _gemini_chat(messages, json_mode=False, timeout=30.0)
+            if text is not None:
+                return {"message": {"role": "assistant", "content": text}}
+        except Exception as e:  # noqa: BLE001
+            log.error(f"Gemini chat error: {e}")
+
+    # 3) Fallback: proxy to local Ollama
     import httpx
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -337,7 +689,7 @@ async def llm_chat(request: Request):
             return r.json()
     except Exception as e:  # noqa: BLE001
         log.error(f"LLM chat proxy error: {e}")
-        raise HTTPException(502, detail=f"Ollama unavailable: {e}")
+        raise HTTPException(502, detail=f"AI services unavailable")
 
 
 async def _ask_ollama_plan(tasks: List[Task]) -> Optional[str]:
@@ -473,9 +825,30 @@ Google подключён: {"да" if google_connected else "нет"}
             _execute_server_side_actions(parsed)
             return parsed
         except Exception as e:  # noqa: BLE001
-            log.error(f"Cloud AI command error, falling back to Ollama: {e}")
+            log.error(f"Cloud AI command error, falling back: {e}")
 
-    # 2) Fallback: Ollama JSON chat
+    # 2) Gemini fallback (if GEMINI_API_KEY is set)
+    if GEMINI_API_KEY:
+        try:
+            ai_text = await _gemini_chat(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": message},
+                ],
+                json_mode=True,
+                timeout=30.0,
+            )
+            if ai_text:
+                try:
+                    parsed = json.loads(ai_text)
+                except json.JSONDecodeError:
+                    parsed = {"response": ai_text, "actions": []}
+                _execute_server_side_actions(parsed)
+                return parsed
+        except Exception as e:  # noqa: BLE001
+            log.error(f"Gemini AI command error, falling back to Ollama: {e}")
+
+    # 3) Fallback: Ollama JSON chat
     import httpx
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -497,12 +870,22 @@ Google подключён: {"да" if google_connected else "нет"}
 
                 _execute_server_side_actions(parsed)
                 return parsed
-            raise HTTPException(502, detail="Ollama returned error")
-    except httpx.ConnectError:
-        raise HTTPException(502, detail="Ollama не запущена. Запустите: ollama serve")
     except Exception as e:  # noqa: BLE001
-        log.error(f"AI command error: {e}")
-        raise HTTPException(500, detail=str(e))
+        log.warning(f"Ollama AI command error: {e}")
+
+    # 4) Heuristic fallback — always return a useful response
+    tasks_list = context.get("tasks", [])
+    total = len(tasks_list)
+    done = sum(1 for t in tasks_list if t.get("isCompleted"))
+    if total == 0:
+        advice = "Нет задач на сегодня. Добавьте задачи, чтобы Jarvis мог помочь с планированием."
+    elif done >= total:
+        advice = "Все задачи выполнены! Отличная работа. Можно добавить задачи на завтра."
+    elif done / total >= 0.5:
+        advice = f"Хороший прогресс: {done}/{total} задач выполнено. Продолжайте в том же духе!"
+    else:
+        advice = f"Выполнено {done}/{total} задач. Сосредоточьтесь на самых важных."
+    return {"response": advice, "actions": [], "source": "heuristic"}
 
 
 def _execute_server_side_actions(parsed: dict) -> None:
@@ -605,14 +988,6 @@ async def ai_digest(payload: DigestPayload):
     except Exception as e:
         log.warning(f"Digest Telegram fetch: {e}")
 
-    try:
-        if _whatsapp.selected_chat_ids:
-            wa_text = await _whatsapp.generate_digest_text()
-            if wa_text and not wa_text.startswith("Нет новых"):
-                full_context += f"\n\n💬 WHATSAPP:\n{wa_text[:3000]}"
-    except Exception as e:
-        log.warning(f"Digest WhatsApp fetch: {e}")
-
     system_prompt = """Ты — Jarvis, личный AI-ассистент. Сделай краткую структурированную выдержку.
 
 Формат:
@@ -639,9 +1014,24 @@ async def ai_digest(payload: DigestPayload):
             if text:
                 return {"summary": text}
         except Exception as e:  # noqa: BLE001
-            log.error(f"Cloud digest error, falling back to Ollama: {e}")
+            log.error(f"Cloud digest error, falling back: {e}")
 
-    # 2) Fallback: Ollama
+    # 2) Gemini fallback
+    if GEMINI_API_KEY:
+        try:
+            text = await _gemini_chat(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": full_context},
+                ],
+                timeout=30.0,
+            )
+            if text:
+                return {"summary": text}
+        except Exception as e:  # noqa: BLE001
+            log.error(f"Gemini digest error: {e}")
+
+    # 3) Fallback: Ollama
     import httpx
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -670,16 +1060,16 @@ async def ai_digest(payload: DigestPayload):
 # ---------------------------------------------------------------------------
 
 from telegram_service import TelegramService
-from whatsapp_service import WhatsAppService
 
 _telegram = TelegramService()
-_whatsapp = WhatsAppService()
 
 
-class TelegramConfigPayload(BaseModel):
+class TelegramSendCodePayload(BaseModel):
+    phone: str
+
+class TelegramApiCredentialsPayload(BaseModel):
     api_id: int
     api_hash: str
-    phone: str
 
 class TelegramAuthCompletePayload(BaseModel):
     code: str
@@ -687,12 +1077,7 @@ class TelegramAuthCompletePayload(BaseModel):
     password: Optional[str] = None
 
 class ChatSelectPayload(BaseModel):
-    chat_ids: List  # List[int] for Telegram, List[str] for WhatsApp
-
-class WhatsAppConfigPayload(BaseModel):
-    instance_id: str
-    api_token: str
-    base_url: Optional[str] = None
+    chat_ids: List  # List[int] for Telegram
 
 
 # --- Telegram Endpoints ---
@@ -703,17 +1088,32 @@ async def telegram_status():
     return _telegram.status
 
 
+@app.post("/integrations/telegram/api-credentials")
+async def telegram_save_api_credentials(payload: TelegramApiCredentialsPayload):
+    """Save Telegram API ID + Hash (one-time setup from my.telegram.org)."""
+    return _telegram.save_api_credentials(payload.api_id, payload.api_hash)
+
+
 @app.post("/integrations/telegram/configure")
-async def telegram_configure(payload: TelegramConfigPayload):
-    """Save Telegram API credentials (api_id, api_hash, phone)."""
-    _telegram.configure(payload.api_id, payload.api_hash, payload.phone)
-    return {"status": "configured"}
+async def telegram_configure(payload: TelegramSendCodePayload):
+    """Save phone and send verification code (single step)."""
+    return await _telegram.send_code(payload.phone)
+
+
+@app.post("/integrations/telegram/auth/send-code")
+async def telegram_send_code(payload: TelegramSendCodePayload):
+    """Send verification code to the phone number."""
+    return await _telegram.send_code(payload.phone)
 
 
 @app.post("/integrations/telegram/auth/start")
 async def telegram_auth_start():
-    """Start Telegram auth — sends code to the phone."""
-    return await _telegram.start_auth()
+    """Legacy: start auth (requires prior configure call)."""
+    tg = _telegram._config.get("telegram", {})
+    phone = tg.get("phone")
+    if not phone:
+        return {"status": "error", "error": "Not configured"}
+    return await _telegram.send_code(phone)
 
 
 @app.post("/integrations/telegram/auth/complete")
@@ -732,6 +1132,13 @@ async def telegram_list_chats(limit: int = Query(50, ge=1, le=200)):
     chats = await _telegram.list_chats(limit=limit)
     if not chats:
         raise HTTPException(401, detail="Telegram not authorized. Complete auth first.")
+    return {"chats": chats}
+
+
+@app.get("/integrations/telegram/chats/search")
+async def telegram_search_chats(q: str = Query("", min_length=1, max_length=200), limit: int = Query(50, ge=1, le=200)):
+    """Search user's Telegram chats by name/title."""
+    chats = await _telegram.search_chats(query=q, limit=limit)
     return {"chats": chats}
 
 
@@ -761,74 +1168,6 @@ async def telegram_digest(hours: int = Query(24, ge=1, le=168)):
 async def telegram_disconnect():
     """Logout and clear Telegram session."""
     await _telegram.disconnect()
-    return {"status": "disconnected"}
-
-
-# --- WhatsApp Endpoints ---
-
-@app.get("/integrations/whatsapp/status")
-async def whatsapp_status():
-    """Current status of WhatsApp integration."""
-    status = _whatsapp.status
-    if _whatsapp.is_configured:
-        auth = await _whatsapp.check_auth()
-        status["auth_status"] = auth.get("status", "unknown")
-    return status
-
-
-@app.post("/integrations/whatsapp/configure")
-async def whatsapp_configure(payload: WhatsAppConfigPayload):
-    """Save WhatsApp (Green API) credentials."""
-    _whatsapp.configure(payload.instance_id, payload.api_token, payload.base_url)
-    return {"status": "configured"}
-
-
-@app.get("/integrations/whatsapp/qr")
-async def whatsapp_qr():
-    """Get QR code for WhatsApp Web scanning."""
-    qr = await _whatsapp.get_qr_code()
-    if qr:
-        return {"qr": qr}
-    raise HTTPException(400, detail="QR not available. Check configuration or already authorized.")
-
-
-@app.get("/integrations/whatsapp/chats")
-async def whatsapp_list_chats():
-    """List available WhatsApp chats for selection."""
-    chats = await _whatsapp.list_chats()
-    if not chats:
-        auth = await _whatsapp.check_auth()
-        if auth.get("status") != "authorized":
-            raise HTTPException(401, detail="WhatsApp not authorized. Scan QR code first.")
-        return {"chats": []}
-    return {"chats": chats}
-
-
-@app.post("/integrations/whatsapp/chats/select")
-async def whatsapp_select_chats(payload: ChatSelectPayload):
-    """Save which WhatsApp chats to monitor."""
-    _whatsapp.set_selected_chats([str(cid) for cid in payload.chat_ids])
-    return {"status": "ok", "selected_count": len(payload.chat_ids)}
-
-
-@app.get("/integrations/whatsapp/digest")
-async def whatsapp_digest():
-    """Get digest from selected WhatsApp chats, summarized by LLM."""
-    if not _whatsapp.selected_chat_ids:
-        return {"summary": "Нет выбранных чатов WhatsApp. Выберите чаты в настройках."}
-
-    raw_text = await _whatsapp.generate_digest_text()
-    if raw_text.startswith("Нет новых"):
-        return {"summary": raw_text}
-
-    summary = await _summarize_messenger_digest("WhatsApp", raw_text)
-    return {"summary": summary}
-
-
-@app.post("/integrations/whatsapp/disconnect")
-async def whatsapp_disconnect():
-    """Disconnect WhatsApp integration."""
-    await _whatsapp.disconnect()
     return {"status": "disconnected"}
 
 
@@ -995,25 +1334,6 @@ async def ai_context_search(payload: ContextSearchPayload):
         except Exception as e:  # noqa: BLE001
             log.warning(f"Context search Telegram error: {e}")
 
-    # WhatsApp search (by text in digest)
-    if payload.sources.get("whatsapp", False) and _whatsapp.selected_chat_ids:
-        try:
-            raw = await _whatsapp.generate_digest_text()
-            for line in raw.split("\n"):
-                if query in line.lower():
-                    results["whatsapp_matches"].append(
-                        {
-                            "source": "whatsapp",
-                            "chat_name": "WhatsApp",
-                            "sender_name": "",
-                            "message_text": line[:300],
-                            "date": "",
-                            "relevance": 0.7,
-                        }
-                    )
-        except Exception as e:  # noqa: BLE001
-            log.warning(f"Context search WhatsApp error: {e}")
-
     return results
 
 
@@ -1128,21 +1448,120 @@ class DelegateTaskPayload(BaseModel):
 async def ai_delegate_task(payload: DelegateTaskPayload):
     """Delegate a task to another user via messenger.
 
-    NOTE: Transport-level sending is not fully implemented yet. Endpoint returns
-    a preview payload so that client can show status and we can extend it later.
+    Sends a formatted task message via Telegram (primary) or returns preview
+    if the messenger is not authenticated.
     """
 
     message_preview = (
         f"📋 Вам назначена задача от Jarvis:\n\n"
-        f"*{payload.task_title}*\n"
+        f"**{payload.task_title}**\n"
         f"{payload.task_notes}\n\n"
         "Ответьте «принято» для подтверждения."
     )
 
-    # For now we do not call Telegram/WhatsApp directly (not implemented in services)
+    if payload.platform == "telegram":
+        result = await _telegram.send_message(
+            handle=payload.assignee_handle,
+            text=message_preview,
+        )
+        return {
+            "status": result.get("status", "error"),
+            "platform": "telegram",
+            "assignee": payload.assignee_handle,
+            "message_preview": message_preview,
+            "message_id": result.get("message_id"),
+            "error": result.get("error"),
+        }
+
+    # WhatsApp and other platforms — not yet implemented
     return {
         "status": "not_implemented",
         "platform": payload.platform,
         "assignee": payload.assignee_handle,
         "message_preview": message_preview,
     }
+
+
+# ---------------------------------------------------------------------------
+# AI — Summarize text / Generate reply
+# ---------------------------------------------------------------------------
+
+@app.post("/ai/summarize")
+async def ai_summarize(payload: AISummarizePayload):
+    """Summarize a given text (email body, article, etc.) using LLM."""
+    prompt = (
+        f"Summarize the following text in at most {payload.max_sentences} sentences. "
+        f"Reply in the same language as the original text.\n\n"
+        f"---\n{payload.text}\n---"
+    )
+    messages = [{"role": "user", "content": prompt}]
+
+    # Try Cloud LLM first
+    result = await _cloud_chat(messages, timeout=30.0)
+    if result:
+        return {"summary": result, "source": "cloud"}
+
+    # Try Gemini
+    if GEMINI_API_KEY:
+        try:
+            result = await _ask_gemini_text(prompt)
+            if result:
+                return {"summary": result, "source": "gemini"}
+        except Exception as e:
+            log.warning(f"Gemini summarize failed: {e}")
+
+    # Heuristic: first N sentences
+    sentences = [s.strip() for s in payload.text.replace("\n", " ").split(".") if s.strip()]
+    summary = ". ".join(sentences[:payload.max_sentences])
+    if summary and not summary.endswith("."):
+        summary += "."
+    return {"summary": summary or payload.text[:200], "source": "heuristic"}
+
+
+@app.post("/ai/generate-reply")
+async def ai_generate_reply(payload: AIGenerateReplyPayload):
+    """Generate a reply draft for an email or message."""
+    instruction = payload.instruction or "Write a polite, concise reply."
+    prompt = (
+        f"You are drafting a reply to the following message. "
+        f"Tone: {payload.tone}. {instruction}\n\n"
+        f"Original message:\n---\n{payload.original_text}\n---\n\n"
+        f"Write ONLY the reply text, no greetings header, no signature. "
+        f"Reply in the same language as the original."
+    )
+    messages = [{"role": "user", "content": prompt}]
+
+    result = await _cloud_chat(messages, timeout=30.0)
+    if result:
+        return {"reply": result, "source": "cloud"}
+
+    if GEMINI_API_KEY:
+        try:
+            result = await _ask_gemini_text(prompt)
+            if result:
+                return {"reply": result, "source": "gemini"}
+        except Exception as e:
+            log.warning(f"Gemini generate-reply failed: {e}")
+
+    return {"reply": "", "source": "none", "error": "No LLM available"}
+
+
+async def _ask_gemini_text(prompt: str) -> Optional[str]:
+    """Call Gemini text-only API."""
+    import httpx
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1000},
+    }
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(url, json=payload)
+        r.raise_for_status()
+        data = r.json()
+
+    text = ""
+    for candidate in data.get("candidates", []):
+        for part in candidate.get("content", {}).get("parts", []):
+            text += part.get("text", "")
+    return text.strip() if text.strip() else None

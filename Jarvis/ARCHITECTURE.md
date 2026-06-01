@@ -7,7 +7,7 @@
 **Jarvis** — multi-platform task management & wellness app built with **SwiftUI**:
 
 - **Timeline-based planning** with drag-to-reschedule (15-min snapping)
-- **AI integration** — Ollama (local LLM), Gemini, Cloud GPT, heuristic fallback
+- **AI integration** — Google Gemini (free, default), YandexGPT (best Russian), Cloud GPT (backend proxy), heuristic fallback
 - **iCloud sync** via `NSUbiquitousKeyValueStore`
 - **Calendar & Mail** integration via Python backend
 - **Wellness tracking** — meals, sleep, activity
@@ -51,14 +51,17 @@ Jarvis/
 ├── JarvisTheme.swift            # Theme system (light/dark adaptive)
 ├── AnimationExtensions.swift    # Animation modifiers & transitions
 ├── Config.swift                 # Configuration constants
-├── AIManager.swift              # AI orchestration + intent routing (Ollama, Gemini, heuristic)
+├── AIManager.swift              # AI orchestration + intent routing (Gemini, YandexGPT, CloudGPT, heuristic)
 ├── AIModels.swift               # AI model definitions + HeuristicAdapter
-├── AIContextEngine.swift        # Cross-source semantic search (tasks, calendar, mail)
-├── AILifeCoach.swift            # Personal AI coach (fitness, nutrition, learning, meditation)
+├── GeminiService.swift          # Direct Google Gemini API client (free tier)
+├── YandexGPTService.swift       # Direct YandexGPT API client (best Russian)
+├── AIContextEngine.swift        # Cross-source semantic search (tasks, calendar, mail) + Gemini fallback
+├── AILifeCoach.swift            # Personal AI coach (fitness, nutrition, learning, meditation)так
 ├── MeetingBriefingService.swift # AI meeting briefing generator
 ├── VoiceCommandExecutor.swift   # Executes AIAction → PlannerStore (voice control)
 ├── LLMDigestService.swift       # AI digest aggregator (calendar+mail+messengers)
 ├── CloudSync.swift              # iCloud KV store sync
+├── ModuleManager.swift          # Progressive disclosure — toggleable sidebar modules + presets
 ├── CalendarSyncService.swift    # EKEventKit integration
 ├── NotificationManager.swift    # Local notifications (15 min before task)
 ├── NetworkMonitor.swift         # NWPathMonitor connectivity
@@ -81,14 +84,16 @@ Jarvis/
 ├── Views/
 │   ├── AIChatView.swift         # AI chat dialog
 │   ├── AICommandBarOverlay.swift # Inline AI command bar + voice (bottom bar)
+│   ├── AIProviderSettingsView.swift # Card-based AI provider selection + per-provider settings
 │   ├── CalendarView.swift       # Google Calendar events (iOS)
 │   ├── ChartAnalyticsView.swift # Swift Charts analytics (Phase 3)
 │   ├── MailView.swift           # Gmail messages (iOS)
 │   ├── MessengerSettingsView.swift   # Telegram/WhatsApp setup, auth, chat selection
-│   ├── OnboardingView.swift     # 6-page onboarding + OnboardingManager
+│   ├── OnboardingView.swift     # 7-page onboarding + OnboardingManager (incl. module selection)
 │   ├── ProfileSleepViews.swift  # Profile & sleep calculator sheets
 │   ├── ProjectsView.swift       # Projects + sub-tasks (Phase 3)
 │   ├── SettingsViews.swift      # Settings sheet (iOS/Mac)
+│   ├── SidebarModulesSettingsView.swift # Module preset selection + per-module toggles
 │   ├── SidebarView.swift        # Sidebar navigation + AppMode (iPad/Mac)
 │   ├── TaskSheets.swift         # Task creation/edit sheets
 │   └── TimelineView.swift       # Timeline panel (iPad/Mac)
@@ -339,11 +344,14 @@ JarvisTheme.textPrimary  // reads system color scheme
 | `PlannerStore` | PlannerModels.swift | Task CRUD, query, persistence (cached) |
 | `CloudSync` | CloudSync.swift | iCloud KV sync |
 | `AIManager` | AIManager.swift | AI model orchestration + intent routing |
-| `AIContextEngine` | AIContextEngine.swift | Cross-source semantic search |
-| `MeetingBriefingService` | MeetingBriefingService.swift | Meeting briefing generation |
-| `AILifeCoach` | AILifeCoach.swift | Personal AI coaching (fitness, nutrition, etc.) |
+| `GeminiService` | GeminiService.swift | Direct Google Gemini API (free tier) |
+| `YandexGPTService` | YandexGPTService.swift | Direct YandexGPT API (best Russian) |
+| `AIContextEngine` | AIContextEngine.swift | Cross-source semantic search + Gemini fallback |
+| `MeetingBriefingService` | MeetingBriefingService.swift | Meeting briefing generation (Gemini → YandexGPT → backend) |
+| `AILifeCoach` | AILifeCoach.swift | Personal AI coaching (Gemini → YandexGPT → backend) |
 | `VoiceCommandExecutor` | VoiceCommandExecutor.swift | Executes AI actions in PlannerStore |
-| `LLMDigestService` | LLMDigestService.swift | AI digest from calendar+mail+messengers |
+| `LLMDigestService` | LLMDigestService.swift | AI digest (Gemini → YandexGPT → backend) |
+| `ModuleManager` | ModuleManager.swift | Progressive disclosure — sidebar module toggles + presets |
 | `CalendarSyncService` | CalendarSyncService.swift | EKEventKit sync |
 | `NotificationManager` | NotificationManager.swift | Local notifications (15 min early) |
 | `NetworkMonitor` | NetworkMonitor.swift | Connectivity monitoring |
@@ -579,7 +587,7 @@ LLMDigestService.generateDigest()
 ### Localization
 - ✅ String Catalog (`Localizable.xcstrings`) — Russian (source) + English
 - ✅ `L10n` helper enum (~90 keys)
-- ⬜ Full view wiring (hardcoded strings → L10n references)
+- ⬜ Full view wiring (hardcoded strings → L10n references) — **mostly complete, <5 remaining in previews**
 
 ### Theming
 - ✅ Light / Dark / System themes
@@ -732,12 +740,12 @@ telegram_session.session  ← Telethon session file (Telegram MTProto auth)
 
 ## Known Limitations
 
-1. **iCloud KV Store 1MB limit** — all data serialized as JSON; will fail silently with ~200-300 tasks
-2. **No data migration** — storage key version bumps abandon old data
-3. **No conflict resolution** — last-write-wins on iCloud sync
-4. **Localization partial** — L10n infrastructure ready but most views still use hardcoded Russian strings
-5. **Calendar/Mail iOS-only** — unavailable on macOS/watchOS
-6. **Telegram/WhatsApp send** — delegation endpoint exists but actual messenger send not yet implemented
+1. **CloudKit container ID** — SwiftData uses `cloudKitDatabase: .automatic` but explicit container mapping not verified; relies on Apple automatic matching
+2. **No conflict resolution** — last-write-wins on iCloud sync
+3. **Calendar/Mail iOS-only** — unavailable on macOS/watchOS
+4. **Telegram/WhatsApp send** — delegation endpoint exists but returns `not_implemented`; only digest/read works
+5. **Live Activity** — single-task only; multiple concurrent tasks not supported
+6. **Crash analytics local-only** — CrashReporter stores reports on device; no cloud reporting (Firebase/Sentry not integrated)
 
 ---
 
@@ -763,18 +771,19 @@ telegram_session.session  ← Telethon session file (Telegram MTProto auth)
 - [x] Unify Repository pattern with PlannerStore
 - [x] Remove dead code (TaskStatistics.swift, _deprecated/)
 
-### Phase 3 — Features
-- [ ] CloudKit migration (replaces KV store, removes 1MB limit)
+### Phase 3 — Features ✅
+- [x] SwiftData + CloudKit migration (CloudKit container: iCloud.com.jarvis.planner, ModelConfiguration cloudKitDatabase: .automatic)
+- [x] One-time UserDefaults → SwiftData migration (DataPersistence.migrateFromUserDefaultsIfNeeded)
 - [x] Deep linking from widget/notifications to specific tasks
 - [x] Chart-based analytics (Swift Charts)
 - [x] Localization infrastructure (en/ru)
 - [x] Projects/sub-tasks
-- [ ] Collaborative task sharing
+- [ ] Collaborative task sharing (CKShare — not started)
 
-### Phase 4 — Polish
+### Phase 4 — Polish ✅
 - [x] Full VoiceOver accessibility audit
 - [x] Dynamic Type support
-- [x] Onboarding flow
+- [x] Onboarding flow (7 pages incl. module selection)
 - [x] Global error handling (ErrorHandler wired to root view)
 - [x] macOS keyboard shortcuts (⌘N, ⌘D, ⌘I, ⇧⌘A, ⌘L, ⌃⌘S)
 - [x] Validation error feedback (WellnessView, nutrition photo)
@@ -795,7 +804,7 @@ telegram_session.session  ← Telethon session file (Telegram MTProto auth)
 - [x] Localization updated — Localizable.xcstrings with 795 entries (ru + en)
 - [x] NavigationSection & AppMode enums use localizedName (no hardcoded Russian rawValues)
 - [x] HTTPS backend — TLS certificates (self-signed), uvicorn --ssl, all endpoints https://
-- [x] Unit tests expanded — 92 tests (PlannerStore, L10n, NavigationSection, AppMode, Wellness, Crash, Logger, etc.)
+- [x] Unit tests expanded — 115+ tests (PlannerStore, L10n, NavigationSection, AppMode, Wellness, Crash, Logger, Projects, Attachments, Comments, etc.)
 - [x] Performance tracker — PerformanceTracker (span timing, metrics, slow-op warnings)
 - [x] Crash reporter — CrashReporter (signal handlers, exception handler, non-fatal recording, local report storage)
 - [x] App launch tracker — AppLaunchTracker (cold launch time, session count)
@@ -803,10 +812,23 @@ telegram_session.session  ← Telethon session file (Telegram MTProto auth)
 - [x] ATS exceptions for localhost (Ollama), backend IP, domain
 - [x] NSLocalNetworkUsageDescription for Ollama LLM access
 
-### Phase 7 — Future Enhancements
-- [ ] CloudKit migration (remove 1MB NSUbiquitousKeyValueStore limit)
-- [ ] Actual Telegram/WhatsApp delegation message sending
-- [ ] Firebase/Sentry cloud crash analytics (currently local-only)
+### Phase 7 — AI-Provider Flexibility ✅
+- [x] GeminiService — direct Google Gemini API client (free tier, 1500 req/day)
+- [x] YandexGPTService — direct Yandex Cloud API (best Russian)
+- [x] Multi-provider fallback chain: Gemini → YandexGPT → Backend → Heuristic (all 4 services)
+- [x] AIProviderSettingsView — card-based provider selection with per-provider sub-settings
+- [x] AI model enum with rich metadata (icon, description, badge, isReady, accentColor)
+- [x] ModuleManager — progressive disclosure (Things 3-style sidebar module presets)
+- [x] SidebarModulesSettingsView — module toggles + 4 presets (minimal/structured/powerUser/teamWork)
+- [x] Onboarding module selection page (page 6)
+- [x] All hardcoded Russian strings replaced with L10n keys (+25 new keys)
+
+### Phase 8 — Future Enhancements
+- [ ] Actual Telegram/WhatsApp delegation message sending (backend returns `not_implemented`)
+- [ ] Collaborative task sharing via CKShare
+- [ ] Firebase/Sentry cloud crash analytics (currently local-only CrashReporter)
 - [ ] Performance profiling with Instruments (Core Animation, Time Profiler)
 - [ ] App Store screenshots and preview video
 - [ ] TestFlight beta distribution
+- [ ] Explicit CloudKit container ID mapping verification (currently relies on automatic matching)
+- [ ] Multi-task Live Activity support (currently single-task only)

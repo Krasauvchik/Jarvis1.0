@@ -1,6 +1,26 @@
 import Foundation
 import SwiftData
 
+// MARK: - Shared JSON Codecs
+
+/// Shared encoder/decoder instances to avoid repeated allocation.
+/// Thread-safe since JSONEncoder/JSONDecoder are reentrant after configuration.
+enum EntityCodecs {
+    static let encoder = JSONEncoder()
+    static let decoder = JSONDecoder()
+    
+    /// Safely encode a Codable value to Data, returning nil on failure.
+    static func encode<T: Encodable>(_ value: T) -> Data? {
+        try? encoder.encode(value)
+    }
+    
+    /// Safely decode a Codable value from optional Data, returning nil on failure.
+    static func decode<T: Decodable>(_ type: T.Type, from data: Data?) -> T? {
+        guard let data else { return nil }
+        return try? decoder.decode(type, from: data)
+    }
+}
+
 // MARK: - SwiftData Persistence Layer
 // @Model classes that mirror the Codable structs for SwiftData + CloudKit persistence.
 // PlannerStore converts between structs ↔ @Model objects to keep the view layer unchanged.
@@ -33,23 +53,47 @@ final class TaskEntity {
     var sourceRaw: String
     var remindersData: Data?
     var attachmentsData: Data?
+    var commentsData: Data?
+    var spentMinutes: Int
+    var externalId: String?
     
     init(from task: PlannerTask) {
         self.taskID = task.id
+        self.title = ""  // placeholder — applyFields will set real values
+        self.notes = ""
+        self.date = task.date
+        self.durationMinutes = 0
+        self.isAllDay = false
+        self.isCompleted = false
+        self.hasAlarm = false
+        self.isInbox = false
+        self.colorIndex = 0
+        self.icon = ""
+        self.priorityRaw = ""
+        self.createdAt = task.createdAt
+        self.modifiedAt = task.modifiedAt
+        self.sourceRaw = ""
+        self.spentMinutes = 0
+        applyFields(from: task)
+    }
+    
+    /// Single source of truth for mapping PlannerTask → TaskEntity properties.
+    /// Used by both init(from:) and update(from:) to eliminate duplication.
+    private func applyFields(from task: PlannerTask) {
         self.title = task.title
         self.notes = task.notes
         self.date = task.date
         self.durationMinutes = task.durationMinutes
         self.isAllDay = task.isAllDay
-        self.recurrenceRuleData = try? JSONEncoder().encode(task.recurrenceRule)
+        self.recurrenceRuleData = EntityCodecs.encode(task.recurrenceRule)
         self.isCompleted = task.isCompleted
         self.hasAlarm = task.hasAlarm
         self.isInbox = task.isInbox
-        self.completedRecurrenceDatesData = try? JSONEncoder().encode(task.completedRecurrenceDates)
+        self.completedRecurrenceDatesData = EntityCodecs.encode(task.completedRecurrenceDates)
         self.colorIndex = task.colorIndex
         self.icon = task.icon
         self.categoryId = task.categoryId
-        self.tagIdsData = try? JSONEncoder().encode(task.tagIds)
+        self.tagIdsData = EntityCodecs.encode(task.tagIds)
         self.calendarEventId = task.calendarEventId
         self.priorityRaw = task.priority.rawValue
         self.parentTaskId = task.parentTaskId
@@ -58,34 +102,30 @@ final class TaskEntity {
         self.modifiedAt = task.modifiedAt
         self.completedAt = task.completedAt
         self.sourceRaw = task.source.rawValue
-        self.remindersData = try? JSONEncoder().encode(task.reminders)
-        self.attachmentsData = try? JSONEncoder().encode(task.attachments)
+        self.remindersData = EntityCodecs.encode(task.reminders)
+        self.attachmentsData = EntityCodecs.encode(task.attachments)
+        self.commentsData = EntityCodecs.encode(task.comments)
+        self.spentMinutes = task.spentMinutes
+        self.externalId = task.externalId
     }
     
     func toStruct() -> PlannerTask {
-        let decoder = JSONDecoder()
-        let recurrenceRule = recurrenceRuleData.flatMap { try? decoder.decode(RecurrenceRule.self, from: $0) }
-        let completedDates = (completedRecurrenceDatesData.flatMap { try? decoder.decode([Date].self, from: $0) }) ?? []
-        let tagIds = (tagIdsData.flatMap { try? decoder.decode([UUID].self, from: $0) }) ?? []
-        let reminders = (remindersData.flatMap { try? decoder.decode([TaskReminder].self, from: $0) }) ?? []
-        let attachments = (attachmentsData.flatMap { try? decoder.decode([TaskAttachment].self, from: $0) }) ?? []
-        
-        return PlannerTask(
+        PlannerTask(
             id: taskID,
             title: title,
             notes: notes,
             date: date,
             durationMinutes: durationMinutes,
             isAllDay: isAllDay,
-            recurrenceRule: recurrenceRule,
+            recurrenceRule: EntityCodecs.decode(RecurrenceRule.self, from: recurrenceRuleData),
             isCompleted: isCompleted,
             hasAlarm: hasAlarm,
             isInbox: isInbox,
-            completedRecurrenceDates: completedDates,
+            completedRecurrenceDates: EntityCodecs.decode([Date].self, from: completedRecurrenceDatesData) ?? [],
             colorIndex: colorIndex,
             icon: icon,
             categoryId: categoryId,
-            tagIds: tagIds,
+            tagIds: EntityCodecs.decode([UUID].self, from: tagIdsData) ?? [],
             calendarEventId: calendarEventId,
             priority: TaskPriority(rawValue: priorityRaw) ?? .medium,
             parentTaskId: parentTaskId,
@@ -94,36 +134,16 @@ final class TaskEntity {
             modifiedAt: modifiedAt,
             completedAt: completedAt,
             source: TaskSource(rawValue: sourceRaw) ?? .manual,
-            reminders: reminders,
-            attachments: attachments
+            reminders: EntityCodecs.decode([TaskReminder].self, from: remindersData) ?? [],
+            attachments: EntityCodecs.decode([TaskAttachment].self, from: attachmentsData) ?? [],
+            comments: EntityCodecs.decode([TaskComment].self, from: commentsData) ?? [],
+            spentMinutes: spentMinutes,
+            externalId: externalId
         )
     }
     
     func update(from task: PlannerTask) {
-        self.title = task.title
-        self.notes = task.notes
-        self.date = task.date
-        self.durationMinutes = task.durationMinutes
-        self.isAllDay = task.isAllDay
-        self.recurrenceRuleData = try? JSONEncoder().encode(task.recurrenceRule)
-        self.isCompleted = task.isCompleted
-        self.hasAlarm = task.hasAlarm
-        self.isInbox = task.isInbox
-        self.completedRecurrenceDatesData = try? JSONEncoder().encode(task.completedRecurrenceDates)
-        self.colorIndex = task.colorIndex
-        self.icon = task.icon
-        self.categoryId = task.categoryId
-        self.tagIdsData = try? JSONEncoder().encode(task.tagIds)
-        self.calendarEventId = task.calendarEventId
-        self.priorityRaw = task.priority.rawValue
-        self.parentTaskId = task.parentTaskId
-        self.projectId = task.projectId
-        self.createdAt = task.createdAt
-        self.modifiedAt = task.modifiedAt
-        self.completedAt = task.completedAt
-        self.sourceRaw = task.source.rawValue
-        self.remindersData = try? JSONEncoder().encode(task.reminders)
-        self.attachmentsData = try? JSONEncoder().encode(task.attachments)
+        applyFields(from: task)
     }
 }
 

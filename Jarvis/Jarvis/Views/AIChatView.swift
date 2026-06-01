@@ -93,6 +93,11 @@ struct AIChatView: View {
                 }
             }
         }
+        .onChange(of: speech.errorMessage) { _, newError in
+            if let err = newError, !err.isEmpty {
+                errorMessage = "🎤 \(err)"
+            }
+        }
         .sheet(isPresented: $showDigestSheet) {
             digestSheet
         }
@@ -160,9 +165,16 @@ struct AIChatView: View {
         HStack(alignment: .top, spacing: 8) {
             ProgressView()
                 .scaleEffect(0.9)
-            Text(speech.isRecording ? L10n.listening : L10n.thinking)
-                .font(.subheadline)
-                .foregroundColor(theme.textSecondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(speech.isRecording ? L10n.listening : L10n.thinking)
+                    .font(.subheadline)
+                    .foregroundColor(theme.textSecondary)
+                if !speech.isRecording {
+                    Text(L10n.aiProcessingRequest)
+                        .font(.caption2)
+                        .foregroundColor(theme.textTertiary)
+                }
+            }
             Spacer()
         }
         .padding(.horizontal, 14)
@@ -254,47 +266,73 @@ struct AIChatView: View {
     // MARK: - Input Bar
     
     private var inputBar: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            // Voice button
-            Button(action: toggleVoice) {
-                ZStack {
-                    Circle()
-                        .fill(speech.isRecording ? JarvisTheme.accentOrange.opacity(0.15) : Color.clear)
-                        .frame(width: 40, height: 40)
-                    Image(systemName: speech.isRecording ? "stop.circle.fill" : "mic.fill")
-                        .font(.system(size: 22))
-                        .foregroundColor(speech.isRecording ? JarvisTheme.accentOrange : theme.textSecondary)
-                }
-            }
-            .buttonStyle(.plain)
-            .disabled(isWaitingReply)
-            .help(speech.isRecording ? L10n.stopRecording : L10n.voiceCommand)
-            
-            TextField(L10n.messageOrVoice, text: $inputText, axis: .vertical)
-                .textFieldStyle(.plain)
-                .lineLimit(1...5)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(theme.cardBackground)
-                .clipShape(RoundedRectangle(cornerRadius: JarvisTheme.Dimensions.cornerRadius))
-                .overlay(
-                    RoundedRectangle(cornerRadius: JarvisTheme.Dimensions.cornerRadius)
-                        .stroke(speech.isRecording ? JarvisTheme.accentOrange : theme.divider, lineWidth: speech.isRecording ? 2 : 1)
+        VStack(spacing: 0) {
+            if speech.isRecording {
+                // Режим записи — показываем эквалайзер
+                CompactWaveformView(
+                    levels: speech.audioLevels,
+                    isActive: speech.isRecording,
+                    transcript: speech.transcript,
+                    onStop: {
+                        toggleVoice()
+                    }
                 )
-                .disabled(isWaitingReply)
-                .onSubmit { sendMessage() }
-            
-            Button(action: sendMessage) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 32))
-                    .foregroundColor(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? theme.textTertiary : JarvisTheme.accent)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .transition(.asymmetric(
+                    insertion: .move(edge: .bottom).combined(with: .opacity),
+                    removal: .opacity
+                ))
+            } else {
+                // Обычный режим — текстовый ввод
+                HStack(alignment: .bottom, spacing: 10) {
+                    // Voice button
+                    Button(action: toggleVoice) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.clear)
+                                .frame(width: 40, height: 40)
+                            Image(systemName: "mic.fill")
+                                .font(.system(size: 22))
+                                .foregroundColor(theme.textSecondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isWaitingReply)
+                    .help(L10n.voiceCommand)
+                    
+                    TextField(L10n.messageOrVoice, text: $inputText, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .lineLimit(1...5)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(theme.cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: JarvisTheme.Dimensions.cornerRadius))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: JarvisTheme.Dimensions.cornerRadius)
+                                .stroke(theme.divider, lineWidth: 1)
+                        )
+                        .disabled(isWaitingReply)
+                        .onSubmit { sendMessage() }
+                    
+                    Button(action: sendMessage) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 32))
+                            .foregroundColor(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? theme.textTertiary : JarvisTheme.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isWaitingReply)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .transition(.asymmetric(
+                    insertion: .opacity,
+                    removal: .move(edge: .bottom).combined(with: .opacity)
+                ))
             }
-            .buttonStyle(.plain)
-            .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isWaitingReply)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
         .background(theme.sidebarBackground)
+        .animation(.easeInOut(duration: 0.25), value: speech.isRecording)
     }
     
     // MARK: - Digest Sheet
@@ -435,7 +473,7 @@ struct AIChatView: View {
             
             if let actions = response.actions, !actions.isEmpty {
                 executedActions = actions
-                let log = commandExecutor.execute(actions: actions)
+                let log = await commandExecutor.execute(actions: actions)
                 let logText = log.filter { !$0.isEmpty }.joined(separator: "\n")
                 if !logText.isEmpty {
                     replyText += "\n\n" + logText
@@ -478,12 +516,11 @@ struct AIChatView: View {
         Task { @MainActor in
             let tasks = dependencies.plannerStore.tasks
             
-            // Check which integrations user has enabled
+            // Check which integrations user has enabled (default to true to match Settings UI)
             let sources = LLMDigestService.DigestSources(
-                includeCalendar: UserDefaults.standard.bool(forKey: Config.Storage.skillCalendarKey),
-                includeMail: UserDefaults.standard.bool(forKey: Config.Storage.skillMailKey),
-                includeTelegram: UserDefaults.standard.bool(forKey: Config.Storage.skillTelegramKey),
-                includeWhatsApp: UserDefaults.standard.bool(forKey: Config.Storage.skillWhatsAppKey)
+                includeCalendar: UserDefaults.standard.object(forKey: Config.Storage.skillCalendarKey) as? Bool ?? true,
+                includeMail: UserDefaults.standard.object(forKey: Config.Storage.skillMailKey) as? Bool ?? true,
+                includeTelegram: UserDefaults.standard.object(forKey: Config.Storage.skillTelegramKey) as? Bool ?? true
             )
             
             if let digest = await digestService.generateDigest(tasks: tasks, sources: sources) {

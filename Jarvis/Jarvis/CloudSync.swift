@@ -13,7 +13,8 @@ final class CloudSync: ObservableObject {
     
     private var subscriptions = Set<AnyCancellable>()
     private let kvStore = NSUbiquitousKeyValueStore.default
-    private var pendingTasks: [PlannerTask] = []
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
     /// Для синхронизации при восстановлении сети (логика как в Task-Sync-Pro).
     private var wasConnected = true
     
@@ -62,7 +63,7 @@ final class CloudSync: ObservableObject {
     
     func saveTasks(_ tasks: [PlannerTask]) {
         do {
-            let data = try JSONEncoder().encode(tasks)
+            let data = try encoder.encode(tasks)
             let sizeKB = data.count / 1024
             if sizeKB > 900 {
                 Logger.shared.warning("iCloud KV store tasks data is \(sizeKB)KB — approaching 1MB limit!")
@@ -77,19 +78,19 @@ final class CloudSync: ObservableObject {
     
     func loadTasks() -> [PlannerTask]? {
         guard let data = kvStore.data(forKey: "tasks_v4"),
-              let tasks = try? JSONDecoder().decode([PlannerTask].self, from: data) else { return nil }
+              let tasks = try? decoder.decode([PlannerTask].self, from: data) else { return nil }
         return tasks
     }
     
     func saveWellness(_ snapshot: WellnessSnapshot) {
-        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        guard let data = try? encoder.encode(snapshot) else { return }
         kvStore.set(data, forKey: "wellness_v3")
         kvStore.synchronize()
     }
     
     func loadWellness() -> WellnessSnapshot? {
         guard let data = kvStore.data(forKey: "wellness_v3"),
-              let snapshot = try? JSONDecoder().decode(WellnessSnapshot.self, from: data) else { return nil }
+              let snapshot = try? decoder.decode(WellnessSnapshot.self, from: data) else { return nil }
         return snapshot
     }
     
@@ -122,26 +123,26 @@ final class CloudSync: ObservableObject {
     }
 
     func saveCategories(_ categories: [TaskCategory]) {
-        guard let data = try? JSONEncoder().encode(categories) else { return }
+        guard let data = try? encoder.encode(categories) else { return }
         kvStore.set(data, forKey: "categories_v1")
         kvStore.synchronize()
     }
 
     func loadCategories() -> [TaskCategory]? {
         guard let data = kvStore.data(forKey: "categories_v1"),
-              let list = try? JSONDecoder().decode([TaskCategory].self, from: data) else { return nil }
+              let list = try? decoder.decode([TaskCategory].self, from: data) else { return nil }
         return list
     }
 
     func saveTags(_ tags: [TaskTag]) {
-        guard let data = try? JSONEncoder().encode(tags) else { return }
+        guard let data = try? encoder.encode(tags) else { return }
         kvStore.set(data, forKey: "tags_v1")
         kvStore.synchronize()
     }
 
     func loadTags() -> [TaskTag]? {
         guard let data = kvStore.data(forKey: "tags_v1"),
-              let list = try? JSONDecoder().decode([TaskTag].self, from: data) else { return nil }
+              let list = try? decoder.decode([TaskTag].self, from: data) else { return nil }
         return list
     }
     

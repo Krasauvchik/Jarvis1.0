@@ -2,7 +2,7 @@ import Foundation
 import Combine
 
 // MARK: - LLM Digest Service
-/// Собирает данные из календаря, почты, (Telegram/WhatsApp через бэкенд) и формирует
+/// Собирает данные из календаря, почты, Telegram (через бэкенд) и формирует
 /// AI-выдержку по текущей ситуации пользователя.
 
 @MainActor
@@ -38,7 +38,7 @@ final class LLMDigestService: ObservableObject {
     
     struct MessengerNote: Identifiable {
         let id = UUID()
-        let source: String  // "telegram" | "whatsapp"
+        let source: String  // "telegram"
         let summary: String
     }
     
@@ -48,18 +48,15 @@ final class LLMDigestService: ObservableObject {
         var includeCalendar: Bool = true
         var includeMail: Bool = true
         var includeTelegram: Bool = false
-        var includeWhatsApp: Bool = false
         
         nonisolated init(
             includeCalendar: Bool = true,
             includeMail: Bool = true,
-            includeTelegram: Bool = false,
-            includeWhatsApp: Bool = false
+            includeTelegram: Bool = false
         ) {
             self.includeCalendar = includeCalendar
             self.includeMail = includeMail
             self.includeTelegram = includeTelegram
-            self.includeWhatsApp = includeWhatsApp
         }
     }
     
@@ -70,6 +67,11 @@ final class LLMDigestService: ObservableObject {
         tasks: [PlannerTask],
         sources: DigestSources = DigestSources()
     ) async -> DigestResult? {
+        // Return cached result if still fresh (5 min TTL)
+        if let last = lastDigest, Date().timeIntervalSince(last.generatedAt) < 300 {
+            return last
+        }
+        
         isLoading = true
         error = nil
         defer { isLoading = false }
@@ -78,8 +80,7 @@ final class LLMDigestService: ObservableObject {
         async let calendarData = sources.includeCalendar ? fetchCalendarEvents() : []
         async let mailData = sources.includeMail ? fetchMailHighlights() : []
         async let messengerData = fetchMessengerNotes(
-            telegram: sources.includeTelegram,
-            whatsApp: sources.includeWhatsApp
+            telegram: sources.includeTelegram
         )
         
         let events = await calendarData
@@ -112,18 +113,26 @@ final class LLMDigestService: ObservableObject {
     // MARK: - Data Fetching
     
     private func fetchCalendarEvents() async -> [CalendarEventBrief] {
-        do {
-            let events = try await CalendarService.shared.fetchEventsAsDTO()
-            return events.prefix(15).map { event in
-                CalendarEventBrief(
-                    id: event.id,
-                    title: event.title,
-                    time: event.startDate.formatted(date: .abbreviated, time: .shortened)
-                )
-            }
-        } catch {
-            Logger.shared.warning("Digest: failed to fetch calendar: \(error.localizedDescription)")
+        let eventKit = EventKitService.shared
+        
+        // Request access if needed
+        if !eventKit.calendarAccessGranted {
+            _ = await eventKit.requestCalendarAccess()
+        }
+        
+        guard eventKit.calendarAccessGranted else {
+            Logger.shared.warning("Digest: no calendar access")
             return []
+        }
+        
+        // Use local EventKit directly (no backend needed)
+        let events = await eventKit.fetchEventsForWeek(from: Date())
+        return events.prefix(15).map { event in
+            CalendarEventBrief(
+                id: event.id,
+                title: event.title,
+                time: event.startDate.formatted(date: .abbreviated, time: .shortened)
+            )
         }
     }
     
@@ -144,7 +153,7 @@ final class LLMDigestService: ObservableObject {
         }
     }
     
-    private func fetchMessengerNotes(telegram: Bool, whatsApp: Bool) async -> [MessengerNote] {
+    private func fetchMessengerNotes(telegram: Bool) async -> [MessengerNote] {
         var notes: [MessengerNote] = []
         
         if telegram {
@@ -153,22 +162,16 @@ final class LLMDigestService: ObservableObject {
             }
         }
         
-        if whatsApp {
-            if let summary = await fetchFromBackend(endpoint: "integrations/whatsapp/digest") {
-                notes.append(MessengerNote(source: "whatsapp", summary: summary))
-            }
-        }
-        
         return notes
     }
     
     private func fetchFromBackend(endpoint: String) async -> String? {
         let url = Config.backendURL.appendingPathComponent(endpoint)
-        var request = URLRequest(url: url)
+        var request = Config.authorizedRequest(url: url)
         request.timeoutInterval = 30
         
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Config.urlSession.data(for: request)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
                 return nil
             }
@@ -241,14 +244,27 @@ final class LLMDigestService: ObservableObject {
     
     // MARK: - LLM Request
     
+    private static let digestSystemPrompt = """
+    Ты — Jarvis, личный AI-ассистент. Сделай краткую выдержку по текущей ситуации пользователя.
+    Формат:
+    1. Главное сейчас (1-2 предложения)
+    2. Задачи на сегодня — статус и приоритеты
+    3. Календарь — ближайшие важные события
+    4. Почта — что требует внимания
+    5. Мессенджеры (если есть данные)
+    6. Рекомендация на ближайший час
+    
+    Будь конкретен, кратко, по-русски.
+    """
+    
     private func requestLLMDigest(context: String) async -> String {
-        // Try backend /ai/digest first
-        if let result = await requestBackendDigest(context: context) {
+        // 1. Gemini — основной (встроенный ключ, всегда работает)
+        if let result = await requestGeminiDigest(context: context) {
             return result
         }
         
-        // Direct Ollama fallback
-        if let result = await requestOllamaDigest(context: context) {
+        // 2. Backend /ai/digest — если доступен
+        if let result = await requestBackendDigest(context: context) {
             return result
         }
         
@@ -256,10 +272,25 @@ final class LLMDigestService: ObservableObject {
         return buildFallbackDigest(context: context)
     }
     
+    private func requestGeminiDigest(context: String) async -> String? {
+        let gemini = GeminiService.shared
+        guard gemini.isConfigured else { return nil }
+        
+        if let result = await gemini.generate(
+            message: context,
+            systemPrompt: Self.digestSystemPrompt,
+            temperature: 0.4,
+            maxTokens: 1024
+        ) {
+            let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
+        }
+        return nil
+    }
+    
     private func requestBackendDigest(context: String) async -> String? {
         let url = Config.backendURL.appendingPathComponent("ai/digest")
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
+        var request = Config.authorizedRequest(url: url, method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 60
         
@@ -268,72 +299,13 @@ final class LLMDigestService: ObservableObject {
         request.httpBody = jsonData
         
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Config.urlSession.data(for: request)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return nil }
             struct Resp: Decodable { let summary: String }
             return (try? JSONDecoder().decode(Resp.self, from: data))?.summary
         } catch {
             return nil
         }
-    }
-    
-    private func requestOllamaDigest(context: String) async -> String? {
-        let modelName = UserDefaults.standard.string(forKey: Config.Storage.ollamaModelKey) ?? Config.Ollama.defaultModelName
-        let url = Config.Endpoints.ollamaBase.appendingPathComponent("api/chat")
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 60
-        
-        let systemPrompt = """
-        Ты — Jarvis, личный AI-ассистент. Сделай краткую выдержку по текущей ситуации пользователя.
-        Формат:
-        1. Главное сейчас (1-2 предложения)
-        2. Задачи на сегодня — статус и приоритеты
-        3. Календарь — ближайшие важные события
-        4. Почта — что требует внимания
-        5. Мессенджеры (если есть данные)
-        6. Рекомендация на ближайший час
-        
-        Будь конкретен, кратко, по-русски.
-        """
-        
-        struct OllamaReq: Encodable {
-            let model: String
-            let messages: [MessagePayload]
-            let stream: Bool
-        }
-        struct MessagePayload: Encodable {
-            let role: String
-            let content: String
-        }
-        struct OllamaResp: Decodable {
-            let message: RespMessage?
-            struct RespMessage: Decodable { let content: String }
-        }
-        
-        let payload = OllamaReq(
-            model: modelName,
-            messages: [
-                MessagePayload(role: "system", content: systemPrompt),
-                MessagePayload(role: "user", content: context),
-            ],
-            stream: false
-        )
-        
-        request.httpBody = try? JSONEncoder().encode(payload)
-        
-        do {
-            let (data, _) = try await URLSession.shared.data(for: request)
-            if let decoded = try? JSONDecoder().decode(OllamaResp.self, from: data),
-               let text = decoded.message?.content.trimmingCharacters(in: .whitespacesAndNewlines),
-               !text.isEmpty {
-                return text
-            }
-        } catch {
-            Logger.shared.warning("Ollama digest error: \(error.localizedDescription)")
-        }
-        return nil
     }
     
     private func buildFallbackDigest(context: String) -> String {

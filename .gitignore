@@ -41,6 +41,18 @@ dist/
 *.pem
 credentials.json
 token.json
+# Telegram (Telethon) authenticated session state — never commit
+*.session
+*.session-journal
+# Messenger config holds a phone number (PII)
+messenger_config.json
+
+# Code coverage / profiling artifacts
+*.profraw
+*.profdata
+
+# Local experiments (not part of the app)
+local-ai/
 
 # Logs
 *.log

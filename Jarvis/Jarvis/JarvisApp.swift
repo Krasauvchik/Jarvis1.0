@@ -6,12 +6,16 @@ struct JarvisApp: App {
     @StateObject private var container = DependencyContainer.shared
     @StateObject private var deepLinkManager = DeepLinkManager.shared
     @StateObject private var onboardingManager = OnboardingManager.shared
+    private var appLock = AppLockService.shared
     @Environment(\.scenePhase) private var scenePhase
     
     init() {
         // Activate crash reporter early
         CrashReporter.shared.activate()
-        
+
+        // Move any legacy plaintext secrets out of UserDefaults into the Keychain.
+        SecretStore.migrateLegacySecretsIfNeeded()
+
         NSUbiquitousKeyValueStore.default.synchronize()
         // Trigger one-time migration from UserDefaults → SwiftData
         Task { @MainActor in
@@ -50,12 +54,20 @@ struct JarvisApp: App {
             }
             .withErrorHandling()
             .modelContainer(DataPersistence.shared.container)
+            .overlay {
+                if appLock.isLocked && appLock.isEnabled {
+                    AppLockView()
+                        .transition(.opacity)
+                }
+            }
             .animation(.easeInOut(duration: 0.5), value: onboardingManager.hasCompletedOnboarding)
+            .animation(.easeInOut(duration: 0.3), value: appLock.isLocked)
             .onChange(of: scenePhase) { _, newPhase in
                 switch newPhase {
                 case .background:
                     // Сохраняем данные немедленно при уходе в фон — защита от потери данных при force-quit
                     PlannerStore.shared.persistNow()
+                    appLock.handleBackground()
                     Logger.shared.info("App moved to background — data persisted")
                 case .inactive:
                     // Также сохраняем на inactive (переключение apps, notification center pull-down)
@@ -63,6 +75,11 @@ struct JarvisApp: App {
                 case .active:
                     // Синхронизация с iCloud при возврате в приложение
                     NSUbiquitousKeyValueStore.default.synchronize()
+                    appLock.handleForeground()
+                    // Авто-подготовка выдержек для ближайших встреч
+                    Task {
+                        await MeetingBriefingService.shared.prefetchBriefings()
+                    }
                 @unknown default:
                     break
                 }
@@ -83,31 +100,43 @@ struct JarvisApp: App {
     private var jarvisCommands: some Commands {
         CommandGroup(after: .newItem) {
             Button(L10n.addTask) {
-                deepLinkManager.handle(URL(string: "jarvis://add")!)
+                if let url = URL(string: "jarvis://add") { deepLinkManager.handle(url) }
             }
             .keyboardShortcut("n", modifiers: .command)
             
             Divider()
             
             Button(L10n.sectionToday) {
-                deepLinkManager.handle(URL(string: "jarvis://today")!)
+                if let url = URL(string: "jarvis://today") { deepLinkManager.handle(url) }
             }
             .keyboardShortcut("d", modifiers: .command)
             
             Button(L10n.sectionInbox) {
-                deepLinkManager.handle(URL(string: "jarvis://inbox")!)
+                if let url = URL(string: "jarvis://inbox") { deepLinkManager.handle(url) }
             }
             .keyboardShortcut("i", modifiers: .command)
             
             Button(L10n.sectionAnalytics) {
-                deepLinkManager.handle(URL(string: "jarvis://analytics")!)
+                if let url = URL(string: "jarvis://analytics") { deepLinkManager.handle(url) }
             }
             .keyboardShortcut("a", modifiers: [.command, .shift])
             
             Button(L10n.sectionNeural) {
-                deepLinkManager.handle(URL(string: "jarvis://chat")!)
+                if let url = URL(string: "jarvis://chat") { deepLinkManager.handle(url) }
             }
             .keyboardShortcut("l", modifiers: .command)
+            
+            Divider()
+            
+            Button(L10n.sectionCalendar) {
+                if let url = URL(string: "jarvis://calendar") { deepLinkManager.handle(url) }
+            }
+            .keyboardShortcut("k", modifiers: .command)
+            
+            Button(L10n.sectionMail) {
+                if let url = URL(string: "jarvis://mail") { deepLinkManager.handle(url) }
+            }
+            .keyboardShortcut("m", modifiers: [.command, .shift])
         }
         
         CommandGroup(after: .sidebar) {

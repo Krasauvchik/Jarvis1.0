@@ -20,6 +20,8 @@ struct WellnessView: View {
     #if os(iOS)
     @State private var photoItem: PhotosPickerItem?
     @State private var isAnalyzing = false
+    @State private var showCamera = false
+    @State private var capturedImage: UIImage?
     #endif
     
     var body: some View {
@@ -118,6 +120,26 @@ struct WellnessView: View {
                 .disabled(isAnalyzing)
                 .onChange(of: photoItem) { _, item in
                     if let item { Task { await analyzePhoto(item) } }
+                }
+                
+                Button { showCamera = true } label: {
+                    Image(systemName: "camera.fill")
+                        .font(.title2)
+                        .foregroundStyle(JarvisTheme.accentGreen)
+                }
+                .buttonStyle(.plain)
+                .bounceOnTap()
+                .disabled(isAnalyzing)
+                .fullScreenCover(isPresented: $showCamera) {
+                    CameraView { image in
+                        capturedImage = image
+                    }
+                    .ignoresSafeArea()
+                }
+                .onChange(of: capturedImage) { _, image in
+                    if let image {
+                        Task { await analyzeCapturedImage(image) }
+                    }
                 }
                 #endif
             }
@@ -263,6 +285,64 @@ struct WellnessView: View {
             Logger.shared.error(error, context: "Nutrition analysis")
         }
     }
+    
+    private func analyzeCapturedImage(_ image: UIImage) async {
+        isAnalyzing = true
+        defer { isAnalyzing = false }
+        
+        guard let data = image.jpegData(compressionQuality: 0.8) else { return }
+        
+        do {
+            let result = try await NutritionService.shared.analyze(imageData: data)
+            await MainActor.run {
+                if mealTitle.isEmpty { mealTitle = result.title }
+                mealCalories = "\(result.calories)"
+                capturedImage = nil
+                addMeal()
+            }
+        } catch {
+            await MainActor.run {
+                validationError = L10n.photoRecognitionFailed
+                capturedImage = nil
+            }
+            Logger.shared.error(error, context: "Camera nutrition analysis")
+        }
+    }
     #endif
 }
+
+// MARK: - Camera View (UIImagePickerController wrapper)
+#if os(iOS)
+struct CameraView: UIViewControllerRepresentable {
+    let onCapture: (UIImage) -> Void
+    @Environment(\.dismiss) private var dismiss
+    
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.delegate = context.coordinator
+        return picker
+    }
+    
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+    
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    
+    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: CameraView
+        init(_ parent: CameraView) { self.parent = parent }
+        
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let image = info[.originalImage] as? UIImage {
+                parent.onCapture(image)
+            }
+            parent.dismiss()
+        }
+        
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.dismiss()
+        }
+    }
+}
+#endif
 #endif

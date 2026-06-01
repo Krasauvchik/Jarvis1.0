@@ -39,6 +39,7 @@ enum L10n {
     static var editTask: String { _s("edit_task") }
     static var deleteTask: String { _s("delete_task") }
     static var duplicateTask: String { _s("duplicate_task") }
+    static var copy: String { _s("copy") }
     static var moveToTomorrow: String { _s("move_to_tomorrow") }
     static var moveToInbox: String { _s("move_to_inbox") }
     static var share: String { _s("share") }
@@ -53,6 +54,7 @@ enum L10n {
     static var noFuturePlans: String { _s("no_future_plans") }
     static var noCompleted: String { _s("no_completed") }
     static var noTasks: String { _s("no_tasks") }
+    static var tasksCount: String { _s("tasks_count") }
     
     // MARK: - Analytics
     static var statistics: String { _s("statistics") }
@@ -94,7 +96,7 @@ enum L10n {
     static var activity: String { _s("activity") }
     static var googleCalendar: String { _s("google_calendar") }
     static var gmail: String { _s("gmail") }
-    static var whatsAppTelegram: String { _s("whatsapp_telegram") }
+    static var telegramIntegration: String { _s("telegram_integration") }
     static var chartsTrends: String { _s("charts_trends") }
     static var chatWithAI: String { _s("chat_with_ai") }
     static var showSidebar: String { _s("show_sidebar") }
@@ -351,9 +353,8 @@ enum L10n {
     static var settingsDeepAnalysis: String { _s("settings_deep_analysis") }
     static var settingsVoiceInputLabel: String { _s("settings_voice_input_label") }
     static var settingsTelegram: String { _s("settings_telegram") }
-    static var settingsWhatsApp: String { _s("settings_whatsapp") }
-    static var settingsConfigureMessengers: String { _s("settings_configure_messengers") }
-    static var settingsConfigureMessengersDesc: String { _s("settings_configure_messengers_desc") }
+    static var settingsConfigureTelegram: String { _s("settings_configure_telegram") }
+    static var settingsConfigureTelegramDesc: String { _s("settings_configure_telegram_desc") }
     static var settingsDataManagement: String { _s("settings_data_management") }
     static var settingsExportData: String { _s("settings_export_data") }
     static var settingsImportData: String { _s("settings_import_data") }
@@ -518,8 +519,9 @@ enum L10n {
     // MARK: - Messenger Settings
     static var messengersTitle: String { _s("messengers_title") }
     static var close: String { _s("close") }
-    static var telegramAPIDesc: String { _s("telegram_api_desc") }
-    static var telegramGetKeys: String { _s("telegram_get_keys") }
+    static var telegramApiSetupDesc: String { _s("telegram_api_setup_desc") }
+    static var telegramOpenMyTelegram: String { _s("telegram_open_my_telegram") }
+    static var telegramEnterPhone: String { _s("telegram_enter_phone") }
     static var phoneNumber: String { _s("phone_number") }
     static var connect: String { _s("connect") }
     static var sendCode: String { _s("send_code") }
@@ -533,6 +535,8 @@ enum L10n {
     static var disconnect: String { _s("disconnect") }
     static var selectChatsForMonitoring: String { _s("select_chats_monitoring") }
     static var loadingChats: String { _s("loading_chats") }
+    static var searchChats: String { _s("search_chats") }
+    static var noChatsFound: String { _s("no_chats_found") }
     static var greenAPIDesc: String { _s("green_api_desc") }
     static var greenAPIRegister: String { _s("green_api_register") }
     static var greenAPIScanQR: String { _s("green_api_scan_qr") }
@@ -608,6 +612,7 @@ enum L10n {
     static var sleepQualityExcellent: String { _s("sleep_quality_excellent") }
     
     // MARK: - Export/Import
+    static var settingsExportCSV: String { _s("settings_export_csv") }
     static var exportReadError: String { _s("export_read_error") }
     static var exportMergeComplete: String { _s("export_merge_complete") }
     static var exportImported: String { _s("export_imported") }
@@ -631,11 +636,38 @@ enum L10n {
     // MARK: - Calendar
     static var calendarTitle: String { _s("calendar_title") }
     static var connectGoogleCalDesc: String { _s("connect_google_cal_desc") }
+    static var newEvent: String { _s("new_event") }
+    static var eventTitle: String { _s("event_title") }
+    static var eventDescription: String { _s("event_description") }
+    static var eventStart: String { _s("event_start") }
+    static var eventEnd: String { _s("event_end") }
+    static var createEvent: String { _s("create_event") }
     
     // MARK: - Mail
     static var mailTitle: String { _s("mail_title") }
     static var connectGoogleMailDesc: String { _s("connect_google_mail_desc") }
     static var noSubject: String { _s("no_subject") }
+    static var reply: String { _s("reply") }
+    static var mailTo: String { _s("mail_to") }
+    static var mailSubject: String { _s("mail_subject") }
+    static var mailCompose: String { _s("mail_compose") }
+    static var mailSend: String { _s("mail_send") }
+    static var mailReplyTitle: String { _s("mail_reply_title") }
+    static var mailOriginal: String { _s("mail_original") }
+    static var mailDeleteConfirm: String { _s("mail_delete_confirm") }
+    static var aiSummary: String { _s("ai_summary") }
+    static var aiSummarize: String { _s("ai_summarize") }
+    static var aiReply: String { _s("ai_reply") }
+    static var generating: String { _s("generating") }
+    
+    // MARK: - Common
+    static var loading: String { _s("loading") }
+    
+    // MARK: - Timeline View Modes
+    static var viewModeDay: String { _s("view_mode_day") }
+    static var viewModeMultiDay: String { _s("view_mode_multi_day") }
+    static var viewModeWeek: String { _s("view_mode_week") }
+    static var viewModeMonth: String { _s("view_mode_month") }
     
     // MARK: - Profile Extra
     static var statsTotal: String { _s("stats_total") }
@@ -675,15 +707,9 @@ enum L10n {
     static var voiceHint8: String { _s("voice_hint_8") }
     
     // MARK: - Messenger Settings Extra
-    static var telegramAPIKeysSaved: String { _s("telegram_api_keys_saved") }
     static var telegram2FAHint: String { _s("telegram_2fa_hint") }
     static var chatsMonitored: String { _s("chats_monitored") }
-    static var whatsappGreenAPIDesc: String { _s("whatsapp_green_api_desc") }
-    static var whatsappRegisterGreenAPI: String { _s("whatsapp_register_green_api") }
-    static var whatsappScanQRHint: String { _s("whatsapp_scan_qr_hint") }
-    static var whatsappCheckingAuth: String { _s("whatsapp_checking_auth") }
-    static var whatsappNoChats: String { _s("whatsapp_no_chats") }
-    static var errorApiIdNumber: String { _s("error_api_id_number") }
+
     static var errorSaveSettingsBackend: String { _s("error_save_settings_backend") }
     static var errorLoadChatsQR: String { _s("error_load_chats_qr") }
     
@@ -725,6 +751,36 @@ enum L10n {
     static var attachmentsTitle: String { _s("attachments_title") }
     static var noAttachments: String { _s("no_attachments") }
     static var noCategoriesHint: String { _s("no_categories_hint") }
+    
+    // MARK: - Kanban Board
+    static var kanbanBoard: String { _s("kanban_board") }
+    static var kanbanToDo: String { _s("kanban_to_do") }
+    static var kanbanInProgress: String { _s("kanban_in_progress") }
+    static var kanbanDone: String { _s("kanban_done") }
+    
+    // MARK: - Templates
+    static var templates: String { _s("templates") }
+    static var builtInTemplates: String { _s("built_in_templates") }
+    static var customTemplates: String { _s("custom_templates") }
+    static var createTemplate: String { _s("create_template") }
+    static var createFromTemplate: String { _s("create_from_template") }
+    static var templateInfo: String { _s("template_info") }
+    
+    // MARK: - Subtasks & Comments
+    static var comments: String { _s("comments") }
+    static var addComment: String { _s("add_comment") }
+    static var noComments: String { _s("no_comments") }
+    
+    // MARK: - Time Tracking
+    static var timeTracking: String { _s("time_tracking") }
+    static var totalSpent: String { _s("total_spent") }
+    static var estimated: String { _s("estimated") }
+    static var logTime: String { _s("log_time") }
+    static var loggedTime: String { _s("logged_time") }
+    static var timeLog: String { _s("time_log") }
+    static func minutesShortValue(_ min: Int) -> String { _f("minutes_short_value", min) }
+    
+
     
     // MARK: - Food Fallback
     static var defaultDish: String { _s("default_dish") }
@@ -876,8 +932,40 @@ enum L10n {
     
     // MARK: - AI Model Display Names
     static var aiModelHeuristic: String { _s("ai_model_heuristic") }
-    static var aiModelOllamaLocal: String { _s("ai_model_ollama_local") }
-    static var aiModelOnDevice: String { _s("ai_model_on_device") }
+    static var aiModelYandexGPT: String { _s("ai_model_yandex_gpt") }
+    
+    // AI Model Descriptions
+    static var aiModelGeminiDesc: String { _s("ai_model_gemini_desc") }
+    static var aiModelYandexDesc: String { _s("ai_model_yandex_desc") }
+    static var aiModelCloudDesc: String { _s("ai_model_cloud_desc") }
+    static var aiModelHeuristicDesc: String { _s("ai_model_heuristic_desc") }
+    
+    // AI Model Badges
+    static var aiModelBadgeFree: String { _s("ai_model_badge_free") }
+    static var aiModelBadgeBestRu: String { _s("ai_model_badge_best_ru") }
+    static var aiModelBadgeOffline: String { _s("ai_model_badge_offline") }
+    
+    // AI Provider Settings
+    static var aiProviderSettings: String { _s("ai_provider_settings") }
+    static var aiGeminiHint: String { _s("ai_gemini_hint") }
+    static var aiYandexHint: String { _s("ai_yandex_hint") }
+    static var aiCloudHint: String { _s("ai_cloud_hint") }
+    
+    // AI Provider UI Labels
+    static var apiKeyOptional: String { _s("api_key_optional") }
+    static var apiKeyLabel: String { _s("api_key_label") }
+    static var geminiApiKeyPlaceholder: String { _s("gemini_api_key_placeholder") }
+    static var yandexApiKeyPlaceholder: String { _s("yandex_api_key_placeholder") }
+    static var backendURLLabel: String { _s("backend_url_label") }
+    static var backendApiKeyPlaceholder: String { _s("backend_api_key_placeholder") }
+    static var aiProcessingRequest: String { _s("ai_processing_request") }
+    static var speakNow: String { _s("speak_now") }
+    static var yandexConfigured: String { _s("yandex_configured") }
+    static var notConfigured: String { _s("not_configured") }
+    static var yandexDescription: String { _s("yandex_description") }
+    static var modelLabel: String { _s("model_label") }
+    static var howToGetApiKey: String { _s("how_to_get_api_key") }
+    static var apiIdMustBeNumber: String { _s("api_id_must_be_number") }
     
     // MARK: - Heuristic Advice
     static var heuristicDefaultTask: String { _s("heuristic_default_task") }
@@ -895,4 +983,166 @@ enum L10n {
     static func briefingAIUnavailable(_ data: String) -> String { _f("briefing_ai_unavailable", data) }
     static var digestBriefSummary: String { _s("digest_brief_summary") }
     static var digestLLMUnavailable: String { _s("digest_llm_unavailable") }
+    
+    // MARK: - Habits
+    static var habitsTitle: String { _s("habits_title") }
+    static var habitsSubtitle: String { _s("habits_subtitle") }
+    static var habitsTodayProgress: String { _s("habits_today_progress") }
+    static var habitsAllDone: String { _s("habits_all_done") }
+    static var habitsKeepGoing: String { _s("habits_keep_going") }
+    static var habitsEmpty: String { _s("habits_empty") }
+    static var habitsEmptyDesc: String { _s("habits_empty_desc") }
+    static var habitsAdd: String { _s("habits_add") }
+    static var habitName: String { _s("habit_name") }
+    static var habitNamePlaceholder: String { _s("habit_name_placeholder") }
+    static var habitFrequency: String { _s("habit_frequency") }
+    static var habitTarget: String { _s("habit_target") }
+    static var habitEdit: String { _s("habit_edit") }
+    static var habitDaily: String { _s("habit_daily") }
+    static var habitWeekly: String { _s("habit_weekly") }
+    static var habitMonthly: String { _s("habit_monthly") }
+    
+    // MARK: - Focus Timer
+    static var focusTitle: String { _s("focus_title") }
+    static var focusReady: String { _s("focus_ready") }
+    static var focusWork: String { _s("focus_work") }
+    static var focusShortBreak: String { _s("focus_short_break") }
+    static var focusLongBreak: String { _s("focus_long_break") }
+    static var focusPaused: String { _s("focus_paused") }
+    static var focusStart: String { _s("focus_start") }
+    static var focusResume: String { _s("focus_resume") }
+    static var focusPause: String { _s("focus_pause") }
+    static var focusStop: String { _s("focus_stop") }
+    static var focusSkip: String { _s("focus_skip") }
+    static var focusSelectTask: String { _s("focus_select_task") }
+    static var focusNoTasks: String { _s("focus_no_tasks") }
+    static var focusPomodoros: String { _s("focus_pomodoros") }
+    static var focusMinutes: String { _s("focus_minutes") }
+    static var focusSettings: String { _s("focus_settings") }
+    static var focusWorkDuration: String { _s("focus_work_duration") }
+    static var focusShortBreakDuration: String { _s("focus_short_break_duration") }
+    static var focusLongBreakDuration: String { _s("focus_long_break_duration") }
+    
+    // MARK: - App Lock
+    static var appLockPasscode: String { _s("app_lock_passcode") }
+    static var appLockReason: String { _s("app_lock_reason") }
+    static var appLockMessage: String { _s("app_lock_message") }
+    static var appLockUnlock: String { _s("app_lock_unlock") }
+    
+    // MARK: - Customization
+    static var accentColor: String { _s("accent_color") }
+    static var timelineStyleLabel: String { _s("timeline_style_label") }
+    static var timelineStyleStandard: String { _s("timeline_style_standard") }
+    static var timelineStyleCompact: String { _s("timeline_style_compact") }
+    static var timelineStyleDetailed: String { _s("timeline_style_detailed") }
+    static var taskStyleLabel: String { _s("task_style_label") }
+    static var taskStyleRounded: String { _s("task_style_rounded") }
+    static var taskStyleMinimal: String { _s("task_style_minimal") }
+    static var taskStyleCard: String { _s("task_style_card") }
+    static var hapticFeedback: String { _s("haptic_feedback") }
+    static var accessibilityTitle: String { _s("accessibility_title") }
+    static var accessReducedMotion: String { _s("accessibility_reduced_motion") }
+    static var accessLargerText: String { _s("accessibility_larger_text") }
+    static var accessHighContrast: String { _s("accessibility_high_contrast") }
+    static var accessDyslexiaFont: String { _s("accessibility_dyslexia_font") }
+    
+    // MARK: - System Calendar (EventKit)
+    static var systemCalendarTitle: String { _s("system_calendar_title") }
+    static var systemCalendarSubtitle: String { _s("system_calendar_subtitle") }
+    static var calendarAccessRequired: String { _s("calendar_access_required") }
+    static var calendarAccessDescription: String { _s("calendar_access_description") }
+    static var grantAccess: String { _s("grant_access") }
+    static var calendarEvents: String { _s("calendar_events") }
+    static var importToJarvis: String { _s("import_to_jarvis") }
+    static var importComplete: String { _s("import_complete") }
+    static var importedTasksCount: String { _s("imported_tasks_count") }
+    static var noEventsForDay: String { _s("no_events_for_day") }
+    static var remindersTitle: String { _s("reminders_title") }
+    static var remindersAccessRequired: String { _s("reminders_access_required") }
+    static var noReminders: String { _s("no_reminders") }
+    static var selectCalendars: String { _s("select_calendars") }
+    static var startDate: String { _s("start_date") }
+    static var endDate: String { _s("end_date") }
+    static var notes: String { _s("notes") }
+    static var title: String { _s("title") }
+    
+    // MARK: - Router & Section Subtitles
+    static var tasksForPlanning: String { _s("tasks_for_planning") }
+    static var scheduledCount: String { _s("scheduled_count") }
+    static var futurePlansCount: String { _s("future_plans_count") }
+    static var completedCount: String { _s("completed_count") }
+
+    // MARK: - Approval Workflow
+    static var approvalNone: String { _s("approval_none") }
+    static var approvalPending: String { _s("approval_pending") }
+    static var approvalApproved: String { _s("approval_approved") }
+    static var approvalRejected: String { _s("approval_rejected") }
+    static var approvalRevision: String { _s("approval_revision") }
+    static var approvalRequestApproval: String { _s("approval_request_approval") }
+    static var approvalAddStep: String { _s("approval_add_step") }
+    static var approvalReviewer: String { _s("approval_reviewer") }
+    static var approvalApprove: String { _s("approval_approve") }
+    static var approvalReject: String { _s("approval_reject") }
+    static var approvalSendForRevision: String { _s("approval_send_for_revision") }
+    static var approvalComment: String { _s("approval_comment") }
+
+    // MARK: - Registries
+    static var registries: String { _s("registries") }
+    static var registryNew: String { _s("registry_new") }
+    static var registryAddColumn: String { _s("registry_add_column") }
+    static var registryAddRow: String { _s("registry_add_row") }
+    static var registryColumnText: String { _s("registry_column_text") }
+    static var registryColumnNumber: String { _s("registry_column_number") }
+    static var registryColumnDate: String { _s("registry_column_date") }
+    static var registryColumnCheckbox: String { _s("registry_column_checkbox") }
+    static var registryColumnChoice: String { _s("registry_column_choice") }
+    static var registryEmptyState: String { _s("registry_empty_state") }
+    static var registryColumnName: String { _s("registry_column_name") }
+    static var registryColumnType: String { _s("registry_column_type") }
+
+    // MARK: - Custom Notification Sounds
+    static var soundDefault: String { _s("sound_default") }
+    static var soundChime: String { _s("sound_chime") }
+    static var soundBell: String { _s("sound_bell") }
+    static var soundGentle: String { _s("sound_gentle") }
+    static var soundUrgent: String { _s("sound_urgent") }
+    static var soundNone: String { _s("sound_none") }
+    static var soundCustom: String { _s("sound_custom") }
+
+    // MARK: - Live Activity
+    static var liveActivityTitle: String { _s("live_activity_title") }
+    static var liveActivityRemaining: String { _s("live_activity_remaining") }
+    static var liveActivityCompleted: String { _s("live_activity_completed") }
+
+    // MARK: - Module System
+    static var moduleGroupProductivity: String { _s("module_group_productivity") }
+    static var moduleGroupIntegrations: String { _s("module_group_integrations") }
+    static var moduleGroupWellness: String { _s("module_group_wellness") }
+    static var modulePresets: String { _s("module_presets") }
+    static var sidebarModules: String { _s("sidebar_modules") }
+    static var sidebarModulesDesc: String { _s("sidebar_modules_desc") }
+    static var customizeSidebar: String { _s("customize_sidebar") }
+    // Presets
+    static var presetMinimal: String { _s("preset_minimal") }
+    static var presetStructured: String { _s("preset_structured") }
+    static var presetPowerUser: String { _s("preset_power_user") }
+    static var presetTeamWork: String { _s("preset_team_work") }
+    static var presetMinimalDesc: String { _s("preset_minimal_desc") }
+    static var presetStructuredDesc: String { _s("preset_structured_desc") }
+    static var presetPowerUserDesc: String { _s("preset_power_user_desc") }
+    static var presetTeamWorkDesc: String { _s("preset_team_work_desc") }
+    // Onboarding modules
+    static var onboardingModulesTitle: String { _s("onboarding_modules_title") }
+    static var onboardingModulesSubtitle: String { _s("onboarding_modules_subtitle") }
+    static var onboardingModulesHint: String { _s("onboarding_modules_hint") }
+    static var continueButton: String { _s("continue_button") }
+    /// Module description passthrough (key is the full key like "module_desc_kanban")
+    static func _moduleDesc(_ key: String) -> String { _s(key) }
+
+    // MARK: - AI Assistant Overlay
+    static var chipWeather: String { _s("chip_weather") }
+    static var chipRates: String { _s("chip_rates") }
+    static var promptWeather: String { _s("prompt_weather") }
+    static var promptRates: String { _s("prompt_rates") }
+
 }

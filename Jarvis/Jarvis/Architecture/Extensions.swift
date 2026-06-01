@@ -319,3 +319,23 @@ extension UserDefaults {
         return try? JSONDecoder().decode(type, from: data)
     }
 }
+
+// MARK: - View Type Erasure
+
+extension View {
+    /// Erase to AnyView — use sparingly, only needed for early returns in @ViewBuilder.
+    func eraseToAnyView() -> AnyView {
+        AnyView(self)
+    }
+}
+
+// MARK: - Calendar Weekday Helpers
+
+extension Array where Element == String {
+    /// Rotates weekday symbols so Monday is first (ISO 8601 standard).
+    /// Apple's `shortWeekdaySymbols` starts with Sunday — this shifts to [Mon, Tue, ..., Sun].
+    var rotatedMondayFirst: [String] {
+        guard count == 7 else { return self }
+        return Array(self[1...]) + [self[0]]
+    }
+}

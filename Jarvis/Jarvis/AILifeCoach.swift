@@ -79,12 +79,19 @@ final class AILifeCoach: ObservableObject {
     func classifyCategory(_ text: String) -> LifeCategory {
         let lower = text.lowercased()
 
-        let fitnessWords = ["зал", "трениров", "качать", "пресс", "бег", "плечи", "спорт", "штанг", "гантел", "отжим", "присед", "кардио", "растяж"]
-        let nutritionWords = ["еда", "питан", "калори", "диет", "рецепт", "готов", "завтрак", "обед", "ужин", "перекус", "белок", "углевод"]
-        let learningWords = ["учить", "курс", "книг", "читать", "практик", "изуч", "язык", "програм", "экзамен"]
-        let meditationWords = ["медитац", "дыхан", "релакс", "йога", "осознан", "спокойств", "сон", "mindful"]
-        let financeWords = ["бюджет", "деньги", "инвест", "накоп", "доход", "расход", "финанс", "сбережен"]
-        let healthWords = ["здоров", "врач", "лекарств", "витамин", "анализ", "давлен", "вес", "сердц"]
+        // Bilingual keywords (ru + en) for robust classification
+        let fitnessWords = ["зал", "трениров", "качать", "пресс", "бег", "плечи", "спорт", "штанг", "гантел", "отжим", "присед", "кардио", "растяж",
+                            "gym", "workout", "train", "abs", "run", "shoulder", "sport", "barbell", "dumbbell", "pushup", "squat", "cardio", "stretch", "exercise", "fitness"]
+        let nutritionWords = ["еда", "питан", "калори", "диет", "рецепт", "готов", "завтрак", "обед", "ужин", "перекус", "белок", "углевод",
+                              "food", "nutrit", "calori", "diet", "recipe", "cook", "breakfast", "lunch", "dinner", "snack", "protein", "carb", "meal"]
+        let learningWords = ["учить", "курс", "книг", "читать", "практик", "изуч", "язык", "програм", "экзамен",
+                             "learn", "course", "book", "read", "practic", "study", "language", "program", "exam", "lecture", "tutorial"]
+        let meditationWords = ["медитац", "дыхан", "релакс", "йога", "осознан", "спокойств", "сон", "mindful",
+                               "meditat", "breath", "relax", "yoga", "calm", "sleep", "awareness"]
+        let financeWords = ["бюджет", "деньги", "инвест", "накоп", "доход", "расход", "финанс", "сбережен",
+                            "budget", "money", "invest", "saving", "income", "expens", "financ", "salary"]
+        let healthWords = ["здоров", "врач", "лекарств", "витамин", "анализ", "давлен", "вес", "сердц",
+                           "health", "doctor", "medic", "vitamin", "checkup", "pressure", "weight", "heart"]
 
         if fitnessWords.contains(where: { lower.contains($0) }) { return .fitness }
         if nutritionWords.contains(where: { lower.contains($0) }) { return .nutrition }
@@ -146,22 +153,39 @@ final class AILifeCoach: ObservableObject {
     // MARK: - LLM Call
 
     private func callLLM(prompt: String) async -> String {
-        let url = Config.Endpoints.ollamaBase.appendingPathComponent("api/generate")
-        var request = URLRequest(url: url, timeoutInterval: 60)
-        request.httpMethod = "POST"
+        let systemPrompt = "Ты — персональный AI-коуч Jarvis. Давай конкретные, практичные советы. Отвечай по-русски."
+        
+        // 1. Gemini — основной (встроенный ключ)
+        let gemini = GeminiService.shared
+        if gemini.isConfigured {
+            if let result = await gemini.generate(
+                message: prompt,
+                systemPrompt: systemPrompt,
+                temperature: 0.6,
+                maxTokens: 1024
+            ) {
+                let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return trimmed }
+            }
+        }
+        
+        // Try backend proxy
+        let url = Config.backendURL.appendingPathComponent("ai/command")
+        var request = Config.authorizedRequest(url: url, method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let model = UserDefaults.standard.string(forKey: Config.Storage.ollamaModelKey) ?? Config.Ollama.defaultModelName
-        let body: [String: Any] = ["model": model, "prompt": prompt, "stream": false]
+        request.timeoutInterval = 60
+        let body: [String: Any] = ["command": prompt]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-
+        
         do {
-            let (data, _) = try await URLSession.shared.data(for: request)
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let (data, response) = try await Config.urlSession.data(for: request)
+            if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let resp = json["response"] as? String {
                 return resp
             }
         } catch {
-            Logger.shared.error("AILifeCoach LLM error: \(error.localizedDescription)")
+            Logger.shared.error("AILifeCoach backend error: \(error.localizedDescription)")
         }
 
         return L10n.coachFailed

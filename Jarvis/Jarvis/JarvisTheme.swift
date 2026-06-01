@@ -129,6 +129,7 @@ struct JarvisTheme {
     static let accentOrange = Color(red: 0.95, green: 0.6, blue: 0.3)
     static let accentPink = Color(red: 0.95, green: 0.5, blue: 0.7)
     static let accentTeal = Color(red: 0.3, green: 0.8, blue: 0.8)
+    static let accentRed = Color(red: 0.9, green: 0.3, blue: 0.3)
     
     static let taskColors: [Color] = [
         Color(red: 0.95, green: 0.45, blue: 0.45),  // Coral

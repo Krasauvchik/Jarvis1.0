@@ -2,7 +2,7 @@ import SwiftUI
 import Combine
 
 // MARK: - Messenger Integration Settings View
-/// UI для настройки Telegram и WhatsApp интеграций.
+/// UI для настройки Telegram интеграции.
 /// Позволяет: ввести API-ключи → авторизоваться → выбрать чаты для мониторинга.
 
 struct MessengerSettingsView: View {
@@ -14,7 +14,6 @@ struct MessengerSettingsView: View {
             ScrollView {
                 VStack(spacing: 24) {
                     TelegramSetupSection()
-                    WhatsAppSetupSection()
                 }
                 .padding()
             }
@@ -53,11 +52,14 @@ struct TelegramSetupSection: View {
             }
             
             switch vm.setupPhase {
+            case .needsApiSetup:
+                telegramApiSetup
+                
             case .notConfigured:
-                telegramCredentialsForm
+                telegramPhoneEntry
                 
             case .configured:
-                telegramAuthSection
+                telegramPhoneEntry
                 
             case .awaitingCode:
                 telegramCodeEntry
@@ -86,14 +88,29 @@ struct TelegramSetupSection: View {
     
     // --- Sub-views ---
     
-    private var telegramCredentialsForm: some View {
+    private var telegramApiSetup: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(L10n.telegramAPIDesc)
+            Text(L10n.telegramApiSetupDesc)
                 .font(.caption)
                 .foregroundColor(theme.textSecondary)
             
-            Link(L10n.telegramGetKeys, destination: URL(string: "https://my.telegram.org/apps")!)
-                .font(.caption.bold())
+            Button(action: {
+                if let url = URL(string: "https://my.telegram.org/apps") {
+                    #if os(iOS)
+                    UIApplication.shared.open(url)
+                    #else
+                    NSWorkspace.shared.open(url)
+                    #endif
+                }
+            }) {
+                HStack {
+                    Image(systemName: "arrow.up.right.square")
+                    Text(L10n.telegramOpenMyTelegram)
+                }
+                .font(.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.blue)
             
             TextField("API ID", text: $vm.apiId)
                 .textFieldStyle(.roundedBorder)
@@ -104,32 +121,32 @@ struct TelegramSetupSection: View {
             TextField("API Hash", text: $vm.apiHash)
                 .textFieldStyle(.roundedBorder)
             
+            Button(action: { Task { await vm.saveApiCredentials() } }) {
+                HStack {
+                    if vm.isLoading { ProgressView().scaleEffect(0.8) }
+                    Text(L10n.save)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Color(red: 0.07, green: 0.72, blue: 0.34))
+            .disabled(vm.apiId.isEmpty || vm.apiHash.isEmpty || vm.isLoading)
+        }
+    }
+    
+    private var telegramPhoneEntry: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(L10n.telegramEnterPhone)
+                .font(.caption)
+                .foregroundColor(theme.textSecondary)
+            
             TextField(L10n.phoneNumber, text: $vm.phone)
                 .textFieldStyle(.roundedBorder)
             #if os(iOS)
                 .keyboardType(.phonePad)
             #endif
             
-            Button(action: { Task { await vm.configure() } }) {
-                HStack {
-                    if vm.isLoading { ProgressView().scaleEffect(0.8) }
-                    Text(L10n.connect)
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(Color(red: 0.07, green: 0.72, blue: 0.34))
-            .disabled(vm.apiId.isEmpty || vm.apiHash.isEmpty || vm.phone.isEmpty || vm.isLoading)
-        }
-    }
-    
-    private var telegramAuthSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(L10n.telegramAPIKeysSaved)
-                .font(.caption)
-                .foregroundColor(theme.textSecondary)
-            
-            Button(action: { Task { await vm.startAuth() } }) {
+            Button(action: { Task { await vm.sendCode() } }) {
                 HStack {
                     if vm.isLoading { ProgressView().scaleEffect(0.8) }
                     Text(L10n.sendCode)
@@ -138,7 +155,7 @@ struct TelegramSetupSection: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(Color(red: 0.07, green: 0.72, blue: 0.34))
-            .disabled(vm.isLoading)
+            .disabled(vm.phone.count < 5 || vm.isLoading)
         }
     }
     
@@ -231,12 +248,50 @@ struct TelegramSetupSection: View {
                 .font(.subheadline.bold())
             }
             
+            // Search bar
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(theme.textSecondary)
+                TextField(L10n.searchChats, text: $vm.searchQuery)
+                    .textFieldStyle(.plain)
+                    .autocorrectionDisabled()
+                if !vm.searchQuery.isEmpty {
+                    Button(action: {
+                        vm.searchQuery = ""
+                        vm.searchResults = nil
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(theme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 8).fill(theme.background))
+            .onChange(of: vm.searchQuery) { _, newValue in
+                vm.onSearchChanged(newValue)
+            }
+            
             if vm.isLoading {
                 ProgressView(L10n.loadingChats)
                     .frame(maxWidth: .infinity)
             } else {
-                ForEach(vm.availableChats, id: \.id) { chat in
-                    chatRow(chat: chat)
+                let chatsToShow = vm.searchResults ?? vm.availableChats
+                if chatsToShow.isEmpty {
+                    Text(vm.searchResults != nil ? L10n.noChatsFound : L10n.loadingChats)
+                        .font(.caption)
+                        .foregroundColor(theme.textSecondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(chatsToShow, id: \.id) { chat in
+                                chatRow(chat: chat)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 400)
                 }
             }
         }
@@ -285,197 +340,10 @@ struct TelegramSetupSection: View {
     }
 }
 
-// MARK: - WhatsApp Setup Section
-
-struct WhatsAppSetupSection: View {
-    @Environment(\.theme) private var theme
-    @StateObject private var vm = WhatsAppSetupVM()
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Image(systemName: "bubble.left.and.bubble.right.fill")
-                    .font(.title2)
-                    .foregroundColor(Color(red: 0.14, green: 0.80, blue: 0.44))
-                Text("WhatsApp")
-                    .font(.title3.bold())
-                    .foregroundColor(theme.textPrimary)
-                Spacer()
-                statusBadge(vm.connectionState)
-            }
-            
-            switch vm.setupPhase {
-            case .notConfigured:
-                whatsappCredentialsForm
-                
-            case .configured, .awaitingCode, .needs2FA:
-                whatsappConnecting
-                
-            case .authorized:
-                whatsappConnected
-                
-            case .chatSelection:
-                whatsappChatSelection
-            }
-            
-            if let error = vm.error {
-                Text(error)
-                    .font(.caption)
-                    .foregroundColor(.red)
-                    .padding(.horizontal, 4)
-            }
-        }
-        .padding(16)
-        .background(RoundedRectangle(cornerRadius: 16).fill(theme.cardBackground))
-        .task { await vm.checkStatus() }
-    }
-    
-    // --- Sub-views ---
-    
-    private var whatsappCredentialsForm: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(L10n.whatsappGreenAPIDesc)
-                .font(.caption)
-                .foregroundColor(theme.textSecondary)
-            
-            Link(L10n.whatsappRegisterGreenAPI, destination: URL(string: "https://green-api.com")!)
-                .font(.caption.bold())
-            
-            Text(L10n.whatsappScanQRHint)
-                .font(.caption)
-                .foregroundColor(theme.textSecondary)
-            
-            TextField("Instance ID", text: $vm.instanceId)
-                .textFieldStyle(.roundedBorder)
-            
-            TextField("API Token", text: $vm.apiToken)
-                .textFieldStyle(.roundedBorder)
-            
-            Button(action: { Task { await vm.configure() } }) {
-                HStack {
-                    if vm.isLoading { ProgressView().scaleEffect(0.8) }
-                    Text(L10n.connect)
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(Color(red: 0.14, green: 0.80, blue: 0.44))
-            .disabled(vm.instanceId.isEmpty || vm.apiToken.isEmpty || vm.isLoading)
-        }
-    }
-    
-    private var whatsappConnecting: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if vm.isLoading {
-                ProgressView(L10n.checkingConnection)
-            } else {
-                Text(L10n.whatsappCheckingAuth)
-                    .font(.caption)
-                    .foregroundColor(theme.textSecondary)
-                
-                Button(L10n.checkStatus) {
-                    Task { await vm.checkStatus() }
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Color(red: 0.14, green: 0.80, blue: 0.44))
-            }
-        }
-    }
-    
-    private var whatsappConnected: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(.green)
-                Text(L10n.connected)
-                    .font(.subheadline.bold())
-                    .foregroundColor(theme.textPrimary)
-            }
-            
-            Text("\(vm.selectedChatsCount) \(L10n.chatsMonitored)")
-                .font(.caption)
-                .foregroundColor(theme.textSecondary)
-            
-            HStack(spacing: 12) {
-                Button(L10n.selectChats) {
-                    Task { await vm.loadChats() }
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Color(red: 0.14, green: 0.80, blue: 0.44))
-                
-                Button(L10n.disconnect, role: .destructive) {
-                    Task { await vm.disconnect() }
-                }
-                .buttonStyle(.bordered)
-            }
-        }
-    }
-    
-    private var whatsappChatSelection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(L10n.selectChatsForMonitoring)
-                    .font(.subheadline.bold())
-                    .foregroundColor(theme.textPrimary)
-                Spacer()
-                Button(L10n.done) {
-                    Task { await vm.saveSelectedChats() }
-                }
-                .font(.subheadline.bold())
-            }
-            
-            if vm.isLoading {
-                ProgressView(L10n.loadingChats)
-                    .frame(maxWidth: .infinity)
-            } else if vm.availableChats.isEmpty {
-                Text(L10n.whatsappNoChats)
-                    .font(.caption)
-                    .foregroundColor(theme.textSecondary)
-            } else {
-                ForEach(vm.availableChats, id: \.id) { chat in
-                    chatRow(chat: chat)
-                }
-            }
-        }
-    }
-    
-    private func chatRow(chat: MessengerChat) -> some View {
-        Button(action: { vm.toggleChat(chat) }) {
-            HStack {
-                Image(systemName: chat.selected ? "checkmark.circle.fill" : "circle")
-                    .foregroundColor(chat.selected ? .green : theme.textSecondary)
-                
-                VStack(alignment: .leading) {
-                    Text(chat.title)
-                        .font(.subheadline)
-                        .foregroundColor(theme.textPrimary)
-                    Text(chat.typeLabel)
-                        .font(.caption2)
-                        .foregroundColor(theme.textSecondary)
-                }
-                
-                Spacer()
-            }
-            .padding(.vertical, 4)
-        }
-        .buttonStyle(.plain)
-    }
-    
-    private func statusBadge(_ state: ConnectionState) -> some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(state.color)
-                .frame(width: 8, height: 8)
-            Text(state.label)
-                .font(.caption2)
-                .foregroundColor(theme.textSecondary)
-        }
-    }
-}
-
 // MARK: - Shared Models & Enums
 
 enum SetupPhase {
+    case needsApiSetup
     case notConfigured
     case configured
     case awaitingCode
@@ -542,6 +410,9 @@ final class TelegramSetupVM: ObservableObject {
     
     @Published var availableChats: [MessengerChat] = []
     @Published var selectedChatsCount = 0
+    @Published var searchQuery = ""
+    @Published var searchResults: [MessengerChat]? = nil
+    private var searchTask: Task<Void, Never>?
     
     func checkStatus() async {
         isLoading = true
@@ -554,11 +425,15 @@ final class TelegramSetupVM: ObservableObject {
             return
         }
         
+        let apiConfigured = data["api_configured"] as? Bool ?? false
         let configured = data["configured"] as? Bool ?? false
         let hasSession = data["has_session"] as? Bool ?? false
         selectedChatsCount = data["selected_chats_count"] as? Int ?? 0
         
-        if configured && hasSession {
+        if !apiConfigured {
+            setupPhase = .needsApiSetup
+            connectionState = .disconnected
+        } else if configured && hasSession {
             setupPhase = .authorized
             connectionState = .connected
         } else if configured {
@@ -570,32 +445,32 @@ final class TelegramSetupVM: ObservableObject {
         }
     }
     
-    func configure() async {
-        guard let id = Int(apiId) else {
-            error = L10n.errorApiIdNumber
+    func saveApiCredentials() async {
+        guard let idNum = Int(apiId) else {
+            error = L10n.apiIdMustBeNumber
             return
         }
         isLoading = true
         error = nil
         defer { isLoading = false }
         
-        let body: [String: Any] = ["api_id": id, "api_hash": apiHash, "phone": phone]
-        guard let _ = await apiPost(Config.Endpoints.telegramConfigure, body: body) else {
-            error = L10n.errorSaveSettingsBackend
+        let body: [String: Any] = ["api_id": idNum, "api_hash": apiHash]
+        guard let data = await apiPost(Config.Endpoints.telegramApiCredentials, body: body),
+              let status = data["status"] as? String, status == "ok" else {
+            error = L10n.errorBackendConnection
             return
         }
-        
-        // Auto-start auth
-        await startAuth()
+        setupPhase = .notConfigured
     }
     
-    func startAuth() async {
+    func sendCode() async {
         isLoading = true
         error = nil
         connectionState = .connecting
         defer { isLoading = false }
         
-        guard let data = await apiPost(Config.Endpoints.telegramAuthStart, body: [:]) else {
+        let body: [String: Any] = ["phone": phone]
+        guard let data = await apiPost(Config.Endpoints.telegramConfigure, body: body) else {
             error = L10n.errorBackendConnection
             connectionState = .error
             return
@@ -650,10 +525,16 @@ final class TelegramSetupVM: ObservableObject {
     func loadChats() async {
         isLoading = true
         error = nil
+        searchQuery = ""
+        searchResults = nil
         setupPhase = .chatSelection
         defer { isLoading = false }
         
-        guard let data = await apiGet(Config.Endpoints.telegramChats),
+        // Load more chats by default (200 instead of 50)
+        var components = URLComponents(url: Config.Endpoints.telegramChats, resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "limit", value: "200")]
+        guard let url = components.url,
+              let data = await apiGet(url),
               let chatsArray = data["chats"] as? [[String: Any]] else {
             error = L10n.errorLoadChats
             return
@@ -671,16 +552,72 @@ final class TelegramSetupVM: ObservableObject {
     }
     
     func toggleChat(_ chat: MessengerChat) {
+        // Toggle in both lists to keep them in sync
         if let idx = availableChats.firstIndex(where: { $0.id == chat.id }) {
             availableChats[idx].selected.toggle()
+        }
+        if var results = searchResults,
+           let idx = results.firstIndex(where: { $0.id == chat.id }) {
+            results[idx].selected.toggle()
+            searchResults = results
+        }
+    }
+    
+    func onSearchChanged(_ query: String) {
+        searchTask?.cancel()
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty {
+            searchResults = nil
+            return
+        }
+        searchTask = Task {
+            try? await Task.sleep(nanoseconds: 400_000_000) // debounce 0.4s
+            guard !Task.isCancelled else { return }
+            await searchChats(query: trimmed)
+        }
+    }
+    
+    func searchChats(query: String) async {
+        isLoading = true
+        error = nil
+        defer { isLoading = false }
+        
+        var components = URLComponents(url: Config.Endpoints.telegramChatsSearch, resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "q", value: query)]
+        guard let url = components.url,
+              let data = await apiGet(url),
+              let chatsArray = data["chats"] as? [[String: Any]] else {
+            searchResults = []
+            return
+        }
+        
+        // Merge selection state from availableChats
+        let selectedIds = Set(availableChats.filter(\.selected).map(\.id))
+        searchResults = chatsArray.map { dict in
+            let id = String(describing: dict["id"] ?? "0")
+            return MessengerChat(
+                id: id,
+                title: dict["title"] as? String ?? "Unknown",
+                type: dict["type"] as? String ?? "unknown",
+                unreadCount: dict["unread_count"] as? Int ?? 0,
+                selected: (dict["selected"] as? Bool ?? false) || selectedIds.contains(id)
+            )
         }
     }
     
     func saveSelectedChats() async {
-        let selectedIds = availableChats.filter(\.selected).map(\.id)
-        let body: [String: Any] = ["chat_ids": selectedIds]
+        // Merge selected from both main list and search results
+        var selectedIds = Set(availableChats.filter(\.selected).map(\.id))
+        if let results = searchResults {
+            for chat in results where chat.selected {
+                selectedIds.insert(chat.id)
+            }
+        }
+        let body: [String: Any] = ["chat_ids": Array(selectedIds)]
         _ = await apiPost(Config.Endpoints.telegramChatsSelect, body: body)
         selectedChatsCount = selectedIds.count
+        searchQuery = ""
+        searchResults = nil
         setupPhase = .authorized
     }
     
@@ -695,134 +632,39 @@ final class TelegramSetupVM: ObservableObject {
     }
 }
 
-// MARK: - WhatsApp ViewModel
-
-@MainActor
-final class WhatsAppSetupVM: ObservableObject {
-    @Published var setupPhase: SetupPhase = .notConfigured
-    @Published var connectionState: ConnectionState = .disconnected
-    @Published var isLoading = false
-    @Published var error: String?
-    
-    @Published var instanceId = ""
-    @Published var apiToken = ""
-    
-    @Published var availableChats: [MessengerChat] = []
-    @Published var selectedChatsCount = 0
-    
-    func checkStatus() async {
-        isLoading = true
-        error = nil
-        defer { isLoading = false }
-        
-        guard let data = await apiGet(Config.Endpoints.whatsappStatus) else {
-            connectionState = .disconnected
-            setupPhase = .notConfigured
-            return
-        }
-        
-        let configured = data["configured"] as? Bool ?? false
-        let authStatus = data["auth_status"] as? String ?? ""
-        selectedChatsCount = data["selected_chats_count"] as? Int ?? 0
-        
-        if configured && authStatus == "authorized" {
-            setupPhase = .authorized
-            connectionState = .connected
-        } else if configured {
-            setupPhase = .configured
-            connectionState = .connecting
-        } else {
-            setupPhase = .notConfigured
-            connectionState = .disconnected
-        }
-    }
-    
-    func configure() async {
-        isLoading = true
-        error = nil
-        defer { isLoading = false }
-        
-        let body: [String: Any] = ["instance_id": instanceId, "api_token": apiToken]
-        guard let _ = await apiPost(Config.Endpoints.whatsappConfigure, body: body) else {
-            error = L10n.errorSaveSettings
-            return
-        }
-        
-        // Check if the instance is already authorized
-        await checkStatus()
-    }
-    
-    func loadChats() async {
-        isLoading = true
-        error = nil
-        setupPhase = .chatSelection
-        defer { isLoading = false }
-        
-        guard let data = await apiGet(Config.Endpoints.whatsappChats),
-              let chatsArray = data["chats"] as? [[String: Any]] else {
-            error = L10n.errorLoadChatsQR
-            return
-        }
-        
-        availableChats = chatsArray.map { dict in
-            MessengerChat(
-                id: dict["id"] as? String ?? "",
-                title: dict["title"] as? String ?? "Unknown",
-                type: dict["type"] as? String ?? "unknown",
-                selected: dict["selected"] as? Bool ?? false
-            )
-        }
-    }
-    
-    func toggleChat(_ chat: MessengerChat) {
-        if let idx = availableChats.firstIndex(where: { $0.id == chat.id }) {
-            availableChats[idx].selected.toggle()
-        }
-    }
-    
-    func saveSelectedChats() async {
-        let selectedIds = availableChats.filter(\.selected).map(\.id)
-        let body: [String: Any] = ["chat_ids": selectedIds]
-        _ = await apiPost(Config.Endpoints.whatsappChatsSelect, body: body)
-        selectedChatsCount = selectedIds.count
-        setupPhase = .authorized
-    }
-    
-    func disconnect() async {
-        isLoading = true
-        defer { isLoading = false }
-        _ = await apiPost(Config.Endpoints.whatsappDisconnect, body: [:])
-        setupPhase = .notConfigured
-        connectionState = .disconnected
-        selectedChatsCount = 0
-        availableChats = []
-    }
-}
-
 // MARK: - Shared Network Helpers
 
 private func apiGet(_ url: URL) async -> [String: Any]? {
-    var request = URLRequest(url: url)
+    var request = Config.authorizedRequest(url: url)
     request.timeoutInterval = 15
     do {
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return nil }
+        let (data, response) = try await Config.urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse else { return nil }
+        guard (200...299).contains(http.statusCode) else {
+            let body = String(data: data, encoding: .utf8) ?? ""
+            Logger.shared.warning("API GET \(url.path) HTTP \(http.statusCode): \(body)")
+            return nil
+        }
         return try JSONSerialization.jsonObject(with: data) as? [String: Any]
     } catch {
-        Logger.shared.warning("API GET \(url.path): \(error.localizedDescription)")
+        Logger.shared.warning("API GET \(url.path): \(error)")
         return nil
     }
 }
 
 private func apiPost(_ url: URL, body: [String: Any]) async -> [String: Any]? {
-    var request = URLRequest(url: url)
-    request.httpMethod = "POST"
+    var request = Config.authorizedRequest(url: url, method: "POST")
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.timeoutInterval = 30
     request.httpBody = try? JSONSerialization.data(withJSONObject: body)
     do {
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return nil }
+        let (data, response) = try await Config.urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse else { return nil }
+        guard (200...299).contains(http.statusCode) else {
+            let body = String(data: data, encoding: .utf8) ?? ""
+            Logger.shared.warning("API POST \(url.path) HTTP \(http.statusCode): \(body)")
+            return nil
+        }
         return try JSONSerialization.jsonObject(with: data) as? [String: Any]
     } catch {
         Logger.shared.warning("API POST \(url.path): \(error.localizedDescription)")

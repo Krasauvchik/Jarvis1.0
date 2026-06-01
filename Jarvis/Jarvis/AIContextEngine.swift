@@ -3,7 +3,7 @@ import Combine
 
 // MARK: - AI Context Engine
 /// Центральный интеллектуальный движок Jarvis.
-/// Агрегирует данные из ВСЕХ подключённых источников (календарь, почта, Telegram, WhatsApp)
+/// Агрегирует данные из ВСЕХ подключённых источников (календарь, почта, Telegram)
 /// и выполняет кросс-платформенный поиск по ключевым словам, участникам, датам.
 ///
 /// Пример: пользователю прилетела встреча "Заведение нового соевого соуса" →
@@ -25,12 +25,11 @@ final class AIContextEngine: ObservableObject {
         let calendarMatches: [CalendarMatch]
         let mailMatches: [MailMatch]
         let telegramMatches: [MessengerMatch]
-        let whatsappMatches: [MessengerMatch]
         let taskMatches: [TaskMatch]
         let generatedAt: Date
         
         var totalMatches: Int {
-            calendarMatches.count + mailMatches.count + telegramMatches.count + whatsappMatches.count + taskMatches.count
+            calendarMatches.count + mailMatches.count + telegramMatches.count + taskMatches.count
         }
     }
     
@@ -54,7 +53,7 @@ final class AIContextEngine: ObservableObject {
     
     struct MessengerMatch: Identifiable {
         let id = UUID()
-        let source: String         // "telegram" | "whatsapp"
+        let source: String         // "telegram"
         let chatName: String
         let senderName: String
         let messageText: String
@@ -71,7 +70,30 @@ final class AIContextEngine: ObservableObject {
     }
     
     private init() {}
-    
+
+    // MARK: - Relevance Tokenization
+
+    /// Common filler words that carry no signal for matching similar meetings.
+    /// Kept deliberately small and bilingual (RU/EN) — these are the words that
+    /// appear in almost every meeting title ("weekly call", "созвон обсудить").
+    private static let stopwords: Set<String> = [
+        // English
+        "the", "and", "for", "with", "you", "your", "this", "that", "from", "about",
+        "meeting", "meet", "call", "sync", "catch", "chat", "discuss", "review",
+        "weekly", "daily", "monthly", "quick", "team", "online", "zoom", "google",
+        // Russian
+        "встреча", "созвон", "звонок", "обсуждение", "обсудить", "про", "для", "как",
+        "это", "что", "еженедельный", "ежедневный", "который", "нужно", "будет", "наш",
+        "team", "онлайн", "зум", "митинг", "встречу", "встрече",
+    ]
+
+    /// Splits text into a set of meaningful lowercase tokens (length > 2, no stopwords).
+    private func tokenize(_ text: String) -> Set<String> {
+        let lowered = text.lowercased()
+        let parts = lowered.components(separatedBy: CharacterSet.alphanumerics.inverted)
+        return Set(parts.filter { $0.count > 2 && !Self.stopwords.contains($0) })
+    }
+
     // MARK: - Cross-Source Search
     
     /// Поиск по ВСЕМ подключённым источникам.
@@ -87,21 +109,92 @@ final class AIContextEngine: ObservableObject {
         // 1. Local task search (instant)
         let taskMatches = searchLocalTasks(query: query, tasks: localTasks)
         
-        // 2. Backend cross-source search (calendar + mail + messengers)
+        // 2. Local EventKit calendar search (no backend needed)
+        let localCalendarMatches = searchLocalCalendar(query: query, lookbackDays: lookbackDays)
+        
+        // 3. Backend cross-source search (mail + messengers)
         let remoteResults = await searchBackend(query: query, lookbackDays: lookbackDays)
+        
+        // Merge: prefer local calendar, use remote for mail/telegram
+        let calendarMatches = localCalendarMatches.isEmpty
+            ? (remoteResults?.calendarMatches ?? [])
+            : localCalendarMatches
         
         let result = CrossSourceSearchResult(
             query: query,
-            calendarMatches: remoteResults?.calendarMatches ?? [],
+            calendarMatches: calendarMatches,
             mailMatches: remoteResults?.mailMatches ?? [],
             telegramMatches: remoteResults?.telegramMatches ?? [],
-            whatsappMatches: remoteResults?.whatsappMatches ?? [],
             taskMatches: taskMatches,
             generatedAt: Date()
         )
         
         lastSearchResult = result
         return result
+    }
+    
+    // MARK: - Local Calendar Search
+    
+    /// Поиск похожих встреч в локальном EventKit календаре.
+    ///
+    /// Скоринг взвешенный: совпадение в названии важнее, чем среди участников, а оно —
+    /// важнее, чем в заметках/месте. Дополнительно учитывается свежесть: недавняя похожая
+    /// встреча информативнее для подготовки, чем такая же годичной давности.
+    private func searchLocalCalendar(query: String, lookbackDays: Int) -> [CalendarMatch] {
+        let eventKit = EventKitService.shared
+        guard eventKit.calendarAccessGranted else { return [] }
+
+        let queryTokens = tokenize(query)
+        guard !queryTokens.isEmpty else { return [] }
+
+        let events = eventKit.searchEvents(lookbackDays: lookbackDays, lookAheadDays: 7)
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "dd.MM.yyyy HH:mm"
+
+        let now = Date()
+        // Field weights: title carries the strongest signal, participants next, body last.
+        let titleWeight = 1.0, attendeeWeight = 0.6, bodyWeight = 0.3
+
+        let scored: [CalendarMatch] = events.compactMap { event in
+            let titleTokens = tokenize(event.title)
+            let attendeeTokens = tokenize(event.attendees.joined(separator: " "))
+            let bodyTokens = tokenize("\(event.notes ?? "") \(event.location ?? "")")
+
+            let titleHits = queryTokens.intersection(titleTokens).count
+            let attendeeHits = queryTokens.intersection(attendeeTokens).count
+            let bodyHits = queryTokens.intersection(bodyTokens).count
+
+            let weighted = Double(titleHits) * titleWeight
+                + Double(attendeeHits) * attendeeWeight
+                + Double(bodyHits) * bodyWeight
+            guard weighted > 0 else { return nil }
+
+            // Normalize against query size so scores are comparable across queries.
+            let base = min(1.0, weighted / Double(queryTokens.count))
+
+            // Recency factor: ~1.0 today, ~0.5 at 30 days, decaying smoothly afterwards.
+            let days = abs(now.timeIntervalSince(event.startDate)) / 86_400
+            let recency = 1.0 / (1.0 + days / 30.0)
+            let score = base * (0.7 + 0.3 * recency)
+
+            return CalendarMatch(
+                id: event.id,
+                title: event.title,
+                date: dateFormatter.string(from: event.startDate),
+                attendees: event.attendees,
+                notes: event.notes ?? "",
+                relevanceScore: score
+            )
+        }
+
+        // Drop weak noise matches and keep the strongest, most recent similar meetings.
+        return Array(
+            scored
+                .filter { $0.relevanceScore >= 0.15 }
+                .sorted { $0.relevanceScore > $1.relevanceScore }
+                .prefix(15)
+        )
     }
     
     /// Быстрый поиск только по локальным задачам (оффлайн).
@@ -131,14 +224,12 @@ final class AIContextEngine: ObservableObject {
         let calendarMatches: [BackendCalendarMatch]?
         let mailMatches: [BackendMailMatch]?
         let telegramMatches: [BackendMessengerMatch]?
-        let whatsappMatches: [BackendMessengerMatch]?
         
         // CodingKeys with snake_case support
         enum CodingKeys: String, CodingKey {
             case calendarMatches = "calendar_matches"
             case mailMatches = "mail_matches"
             case telegramMatches = "telegram_matches"
-            case whatsappMatches = "whatsapp_matches"
         }
     }
     
@@ -171,8 +262,7 @@ final class AIContextEngine: ObservableObject {
     
     private func searchBackend(query: String, lookbackDays: Int) async -> CrossSourceSearchResult? {
         let url = Config.Endpoints.aiContextSearch
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
+        var request = Config.authorizedRequest(url: url, method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 60
         
@@ -183,7 +273,6 @@ final class AIContextEngine: ObservableObject {
                 "calendar": UserDefaults.standard.bool(forKey: Config.Storage.skillCalendarKey),
                 "mail": UserDefaults.standard.bool(forKey: Config.Storage.skillMailKey),
                 "telegram": UserDefaults.standard.bool(forKey: Config.Storage.skillTelegramKey),
-                "whatsapp": UserDefaults.standard.bool(forKey: Config.Storage.skillWhatsAppKey),
             ]
         ]
         
@@ -191,7 +280,7 @@ final class AIContextEngine: ObservableObject {
         request.httpBody = jsonData
         
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Config.urlSession.data(for: request)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
                 Logger.shared.warning("AIContextEngine: backend returned non-200")
                 return nil
@@ -208,9 +297,6 @@ final class AIContextEngine: ObservableObject {
                     MailMatch(id: $0.id, subject: $0.subject, from: $0.from, date: $0.date, snippet: $0.snippet, relevanceScore: $0.relevance ?? 0.5)
                 },
                 telegramMatches: (decoded.telegramMatches ?? []).map {
-                    MessengerMatch(source: $0.source, chatName: $0.chat_name, senderName: $0.sender_name, messageText: $0.message_text, date: $0.date, relevanceScore: $0.relevance ?? 0.5)
-                },
-                whatsappMatches: (decoded.whatsappMatches ?? []).map {
                     MessengerMatch(source: $0.source, chatName: $0.chat_name, senderName: $0.sender_name, messageText: $0.message_text, date: $0.date, relevanceScore: $0.relevance ?? 0.5)
                 },
                 taskMatches: [],
@@ -255,13 +341,6 @@ final class AIContextEngine: ObservableObject {
         if !result.telegramMatches.isEmpty {
             text += "\n💬 TELEGRAM (\(result.telegramMatches.count)):\n"
             for m in result.telegramMatches.prefix(15) {
-                text += "  - [\(m.chatName)] \(m.senderName): \(m.messageText.prefix(150)) (\(m.date))\n"
-            }
-        }
-        
-        if !result.whatsappMatches.isEmpty {
-            text += "\n💬 WHATSAPP (\(result.whatsappMatches.count)):\n"
-            for m in result.whatsappMatches.prefix(15) {
                 text += "  - [\(m.chatName)] \(m.senderName): \(m.messageText.prefix(150)) (\(m.date))\n"
             }
         }

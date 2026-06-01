@@ -444,7 +444,7 @@ struct ProjectTests {
 struct NavigationSectionTests {
     
     @Test func allCasesCount() {
-        #expect(NavigationSection.allCases.count == 13)
+        #expect(NavigationSection.allCases.count == 19)
     }
     
     @Test func localizedNames() {
@@ -489,7 +489,9 @@ struct AppModeTests {
     }
     
     @Test func workModeSectionsContainKeyAreas() {
-        let sections = AppMode.work.visibleSections
+        // Assert the mode's capabilities, not the user-filtered runtime view:
+        // `visibleSections` depends on ModuleManager's enabled set (minimal by default).
+        let sections = AppMode.work.allAvailableSections
         #expect(sections.contains(.today))
         #expect(sections.contains(.inbox))
         #expect(sections.contains(.chat))
@@ -497,12 +499,13 @@ struct AppModeTests {
         #expect(sections.contains(.calendarSection))
         #expect(sections.contains(.mailSection))
     }
-    
+
     @Test func personalModeHasHealth() {
-        let sections = AppMode.personal.visibleSections
+        let sections = AppMode.personal.allAvailableSections
         #expect(sections.contains(.health))
         #expect(sections.contains(.today))
-        #expect(!sections.contains(.inbox))
+        // Personal mode is wellness-focused and does not offer the work-only mail module.
+        #expect(!sections.contains(.mailSection))
     }
     
     @Test func icons() {
@@ -901,5 +904,313 @@ struct TaskTagTests {
         let decoded = try JSONDecoder().decode(TaskTag.self, from: data)
         #expect(decoded.name == "work")
         #expect(decoded.colorIndex == 2)
+    }
+}
+
+// MARK: - DurationFormatter Tests
+
+struct DurationFormatterTests {
+    
+    @Test func formatMinutesOnly() {
+        let result = DurationFormatter.format(30)
+        #expect(result.contains("30"))
+        // Should use L10n.minutesShort
+        #expect(result == "30 \(L10n.minutesShort)")
+    }
+    
+    @Test func formatExactHours() {
+        let result = DurationFormatter.format(120)
+        #expect(result == "2 \(L10n.hoursShort)")
+        // No minutes portion for exact hours
+        #expect(!result.contains(L10n.minutesShort))
+    }
+    
+    @Test func formatHoursAndMinutes() {
+        let result = DurationFormatter.format(90)
+        #expect(result.contains("1"))
+        #expect(result.contains(L10n.hoursShort))
+        #expect(result.contains("30"))
+        #expect(result.contains(L10n.minutesShort))
+    }
+    
+    @Test func formatZeroMinutes() {
+        let result = DurationFormatter.format(0)
+        #expect(result == "0 \(L10n.minutesShort)")
+    }
+    
+    @Test func formatUnderOneHour() {
+        let result = DurationFormatter.format(59)
+        #expect(result == "59 \(L10n.minutesShort)")
+    }
+    
+    @Test func formatExactlyOneHour() {
+        let result = DurationFormatter.format(60)
+        #expect(result == "1 \(L10n.hoursShort)")
+    }
+}
+
+// MARK: - EntityCodecs Tests
+
+struct EntityCodecsTests {
+    
+    @Test func encodeAndDecodeString() {
+        let original = "Hello, World"
+        let data = EntityCodecs.encode(original)
+        #expect(data != nil)
+        let decoded = EntityCodecs.decode(String.self, from: data)
+        #expect(decoded == original)
+    }
+    
+    @Test func decodeFromNilReturnsNil() {
+        let result = EntityCodecs.decode(String.self, from: nil)
+        #expect(result == nil)
+    }
+    
+    @Test func encodeAndDecodeArray() {
+        let uuids = [UUID(), UUID(), UUID()]
+        let data = EntityCodecs.encode(uuids)
+        #expect(data != nil)
+        let decoded = EntityCodecs.decode([UUID].self, from: data)
+        #expect(decoded == uuids)
+    }
+    
+    @Test func encodeAndDecodeRecurrenceRule() {
+        let rule = RecurrenceRule(frequency: .weekly, interval: 2)
+        let data = EntityCodecs.encode(rule)
+        #expect(data != nil)
+        let decoded = EntityCodecs.decode(RecurrenceRule.self, from: data)
+        #expect(decoded?.frequency == .weekly)
+        #expect(decoded?.interval == 2)
+    }
+    
+    @Test func decodeInvalidDataReturnsNil() {
+        let garbage = Data([0xFF, 0xFE, 0x00])
+        let result = EntityCodecs.decode(RecurrenceRule.self, from: garbage)
+        #expect(result == nil)
+    }
+    
+    @Test func encodeAndDecodeDateArray() {
+        let dates = [Date(), Date().addingTimeInterval(3600)]
+        let data = EntityCodecs.encode(dates)
+        let decoded = EntityCodecs.decode([Date].self, from: data)
+        #expect(decoded?.count == 2)
+    }
+    
+    @Test func encodeAndDecodeTaskReminders() {
+        let reminders = [TaskReminder.atStart, TaskReminder.fiveMinBefore, TaskReminder.thirtyMinBefore]
+        let data = EntityCodecs.encode(reminders)
+        let decoded = EntityCodecs.decode([TaskReminder].self, from: data)
+        #expect(decoded?.count == 3)
+        #expect(decoded?.first?.offsetMinutes == 0)
+    }
+    
+    @Test func encodeAndDecodeTaskAttachments() {
+        let attachments = [TaskAttachment(type: .file, fileName: "file.pdf", filePath: "/tmp/file.pdf")]
+        let data = EntityCodecs.encode(attachments)
+        let decoded = EntityCodecs.decode([TaskAttachment].self, from: data)
+        #expect(decoded?.count == 1)
+        #expect(decoded?.first?.fileName == "file.pdf")
+    }
+    
+    @Test func sharedEncoderDecoderAreStable() {
+        // Verify that shared instances don't get replaced
+        let enc1 = EntityCodecs.encoder
+        let enc2 = EntityCodecs.encoder
+        #expect(enc1 === enc2)
+        
+        let dec1 = EntityCodecs.decoder
+        let dec2 = EntityCodecs.decoder
+        #expect(dec1 === dec2)
+    }
+}
+
+// MARK: - AppRouter Tests
+
+@MainActor
+struct AppRouterTests {
+    
+    @Test func taskListSectionsAreRecognized() {
+        let taskSections: [NavigationSection] = [.inbox, .today, .scheduled, .futurePlans, .completed, .all]
+        for section in taskSections {
+            #expect(AppRouter.isTaskListSection(section), "Expected \(section) to be a task list section")
+        }
+    }
+    
+    @Test func nonTaskSectionsAreRejected() {
+        let nonTaskSections: [NavigationSection] = [.chat, .analytics, .health, .projects, .kanban, .templates, .habits, .focus, .registries]
+        for section in nonTaskSections {
+            #expect(!AppRouter.isTaskListSection(section), "Expected \(section) to NOT be a task list section")
+        }
+    }
+    
+    @Test func subtitleForInbox() {
+        let result = AppRouter.subtitle(for: .inbox, taskCount: 5)
+        #expect(result.contains("5"))
+    }
+    
+    @Test func subtitleForToday() {
+        let result = AppRouter.subtitle(for: .today, taskCount: 3)
+        // Today subtitle is a formatted date, not a count
+        #expect(!result.isEmpty)
+    }
+    
+    @Test func subtitleForAnalytics() {
+        let result = AppRouter.subtitle(for: .analytics, taskCount: 0)
+        #expect(result == L10n.chartsTrends)
+    }
+    
+    @Test func emptyStateTextForInbox() {
+        let result = AppRouter.emptyStateText(for: .inbox)
+        #expect(result == L10n.inboxEmpty)
+    }
+    
+    @Test func emptyStateTextForToday() {
+        let result = AppRouter.emptyStateText(for: .today)
+        #expect(result == L10n.noTasksToday)
+    }
+    
+    @Test func emptyStateTextForDefaultReturnsEmpty() {
+        let result = AppRouter.emptyStateText(for: .chat)
+        #expect(result.isEmpty)
+    }
+    
+    @Test func tabIndexMapping() {
+        #expect(AppRouter.tabIndex(for: .today) == 0)
+        #expect(AppRouter.tabIndex(for: .inbox) == 1)
+        #expect(AppRouter.tabIndex(for: .calendarSection) == nil)
+        #expect(AppRouter.tabIndex(for: .mailSection) == 2)
+        #expect(AppRouter.tabIndex(for: .chat) == 3)
+        #expect(AppRouter.tabIndex(for: .analytics) == 4)
+    }
+    
+    @Test func tabIndexForNonTabSectionReturnsNil() {
+        #expect(AppRouter.tabIndex(for: .projects) == nil)
+        #expect(AppRouter.tabIndex(for: .kanban) == nil)
+        #expect(AppRouter.tabIndex(for: .habits) == nil)
+    }
+}
+
+// MARK: - PlannerStore Edge Case Tests
+
+@MainActor
+struct PlannerStoreEdgeCaseTests {
+    
+    @Test func toggleTaskCompletion() {
+        let store = PlannerStore()
+        let task = PlannerTask(title: "Toggle Me")
+        store.add(task)
+        
+        // Toggle to completed
+        store.toggleCompletion(task: task, onDay: nil)
+        let updated = store.tasks.first(where: { $0.id == task.id })
+        #expect(updated?.isCompleted == true)
+        #expect(updated?.completedAt != nil)
+        
+        // Toggle back
+        if let updated {
+            store.toggleCompletion(task: updated, onDay: nil)
+            let reverted = store.tasks.first(where: { $0.id == task.id })
+            #expect(reverted?.isCompleted == false)
+        }
+    }
+    
+    @Test func updateExistingTask() {
+        let store = PlannerStore()
+        var task = PlannerTask(title: "Original")
+        store.add(task)
+        
+        task.title = "Updated"
+        store.update(task)
+        let found = store.tasks.first(where: { $0.id == task.id })
+        #expect(found?.title == "Updated")
+    }
+    
+    @Test func tasksForDayFiltersCorrectly() {
+        let store = PlannerStore()
+        store.removeAll()
+        
+        let today = Date()
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today)!
+        
+        let taskToday = PlannerTask(title: "Today Task", date: today)
+        let taskTomorrow = PlannerTask(title: "Tomorrow Task", date: tomorrow)
+        store.add(taskToday)
+        store.add(taskTomorrow)
+        
+        let todayTasks = store.tasksForDay(today)
+        #expect(todayTasks.allSatisfy { Calendar.current.isDate($0.date, inSameDayAs: today) })
+    }
+    
+    @Test func updateReplacesExistingTask() {
+        let store = PlannerStore()
+        var task = PlannerTask(title: "Original")
+        store.add(task)
+        
+        task.title = "Replaced"
+        task.notes = "Updated notes"
+        store.update(task)
+        
+        let found = store.tasks.filter { $0.id == task.id }
+        #expect(found.count == 1)
+        #expect(found.first?.title == "Replaced")
+        #expect(found.first?.notes == "Updated notes")
+    }
+    
+    @Test func subTaskLinkage() {
+        let store = PlannerStore()
+        let parent = PlannerTask(title: "Parent")
+        store.add(parent)
+        store.addSubTask(title: "Sub 1", parentId: parent.id)
+        store.addSubTask(title: "Sub 2", parentId: parent.id)
+        
+        let subs = store.subTasks(of: parent.id)
+        #expect(subs.count == 2)
+        #expect(subs.allSatisfy { $0.parentTaskId == parent.id })
+    }
+}
+
+// MARK: - TaskAttachment Tests
+
+struct TaskAttachmentTests {
+    
+    @Test func createFileAttachment() {
+        let a = TaskAttachment(type: .file, fileName: "report.pdf", filePath: "/tmp/report.pdf")
+        #expect(a.fileName == "report.pdf")
+        #expect(a.type == .file)
+        #expect(a.filePath == "/tmp/report.pdf")
+    }
+    
+    @Test func createImageAttachment() {
+        let a = TaskAttachment(type: .image, fileName: "img.png", filePath: "/tmp/img.png")
+        #expect(a.type == .image)
+    }
+    
+    @Test func attachmentEncodeDecode() throws {
+        let original = TaskAttachment(type: .file, fileName: "doc.xlsx", filePath: "/tmp/doc.xlsx", fileSize: 1024)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(TaskAttachment.self, from: data)
+        #expect(decoded.fileName == "doc.xlsx")
+        #expect(decoded.filePath == "/tmp/doc.xlsx")
+        #expect(decoded.fileSize == 1024)
+        #expect(decoded.id == original.id)
+    }
+}
+
+// MARK: - TaskComment Tests
+
+struct TaskCommentTests {
+    
+    @Test func createComment() {
+        let c = TaskComment(text: "Need to review")
+        #expect(c.text == "Need to review")
+        #expect(c.createdAt <= Date())
+    }
+    
+    @Test func commentEncodeDecode() throws {
+        let original = TaskComment(text: "Important note")
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(TaskComment.self, from: data)
+        #expect(decoded.text == "Important note")
+        #expect(decoded.id == original.id)
     }
 }

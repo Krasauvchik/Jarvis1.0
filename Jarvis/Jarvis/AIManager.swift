@@ -4,13 +4,32 @@ import Combine
 // MARK: - AI Action (parsed from AI response)
 
 struct AIAction: Codable, Identifiable {
-    var id: String { type + (params["title"] ?? UUID().uuidString) }
+    let stableId: String
+    var id: String { stableId }
     let type: String   // create_task, complete_task, delete_task, reschedule_task, create_event, send_email, show_calendar, show_mail, advice, none
     let params: [String: String]
     
     init(type: String, params: [String: String] = [:]) {
+        self.stableId = type + (params["title"] ?? UUID().uuidString)
         self.type = type
         self.params = params
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case type, params
+    }
+    
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        type = try c.decode(String.self, forKey: .type)
+        params = try c.decodeIfPresent([String: String].self, forKey: .params) ?? [:]
+        stableId = type + (params["title"] ?? UUID().uuidString)
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(type, forKey: .type)
+        try c.encode(params, forKey: .params)
     }
 }
 
@@ -51,6 +70,8 @@ struct AnyCodable: Codable {
         case let i as Int: try container.encode(i)
         case let d as Double: try container.encode(d)
         case let s as String: try container.encode(s)
+        case let arr as [Any]: try container.encode(arr.map(AnyCodable.init))
+        case let dict as [String: Any]: try container.encode(dict.mapValues(AnyCodable.init))
         default: try container.encodeNil()
         }
     }
@@ -66,8 +87,73 @@ final class AIManager: ObservableObject {
     @Published var isProcessing = false
     @Published var lastCommandResponse: AICommandResponse?
     
+    /// Conversation history for context retention (last N turns)
+    private var conversationHistory: [(role: String, content: String)] = []
+    private let maxHistoryTurns = 10
+    
+    /// Adds a user+assistant turn to conversation history
+    private func addToHistory(user: String, assistant: String) {
+        conversationHistory.append((role: "user", content: user))
+        conversationHistory.append((role: "assistant", content: assistant))
+        // Keep only last N turns (each turn = 2 entries)
+        let maxEntries = maxHistoryTurns * 2
+        if conversationHistory.count > maxEntries {
+            conversationHistory = Array(conversationHistory.suffix(maxEntries))
+        }
+    }
+    
+    /// Extracts JSON object from LLM response that may contain extra text
+    private func extractJSON(from text: String) -> AICommandResponse? {
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "```json", with: "")
+            .replacingOccurrences(of: "```", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Try direct decode first
+        if let data = cleaned.data(using: .utf8),
+           let response = try? JSONDecoder().decode(AICommandResponse.self, from: data) {
+            return response
+        }
+        
+        // Find first { and last } to extract JSON object
+        guard let firstBrace = cleaned.firstIndex(of: "{"),
+              let lastBrace = cleaned.lastIndex(of: "}") else { return nil }
+        
+        let jsonStr = String(cleaned[firstBrace...lastBrace])
+        guard let data = jsonStr.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(AICommandResponse.self, from: data)
+    }
+    
     private let heuristic = HeuristicAdapter()
+    private let gemini = GeminiService.shared
+    private let eventKit = EventKitService.shared
     private var syncObserver: NSObjectProtocol?
+
+    /// Текущее время пользователя с часовым поясом для LLM промптов
+    static func currentDateTimeForLLM() -> String {
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "ru_RU")
+        df.dateFormat = "yyyy-MM-dd HH:mm (EEEE), часовой пояс: ZZZZZ (VV)"
+        return df.string(from: Date())
+    }
+    
+    /// Текущий offset часового пояса в формате +03:00
+    static func currentTimezoneOffset() -> String {
+        let seconds = TimeZone.current.secondsFromGMT()
+        let hours = abs(seconds) / 3600
+        let minutes = (abs(seconds) % 3600) / 60
+        let sign = seconds >= 0 ? "+" : "-"
+        return String(format: "%@%02d:%02d", sign, hours, minutes)
+    }
+
+    /// Пример даты для LLM-промптов (завтра в 14:00 локального времени)
+    static func exampleDateForLLM() -> String {
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd"
+        df.timeZone = .current
+        return "\(df.string(from: tomorrow))T14:00:00\(currentTimezoneOffset())"
+    }
 
     /// Краткое знание о навигации/папках Jarvis для LLM.
     /// Используется в системных промптах, чтобы модель понимала структуру приложения.
@@ -101,7 +187,8 @@ final class AIManager: ObservableObject {
                   let model = try? JSONDecoder().decode(AIModel.self, from: data) {
             selectedModel = model
         } else {
-            selectedModel = .ollama
+            // По умолчанию Gemini — бесплатный, быстрый, встроенный ключ
+            selectedModel = .gemini
         }
         setupCloudSync()
     }
@@ -136,32 +223,36 @@ final class AIManager: ObservableObject {
         case contextSearch(String)             // "найди всё по теме X" / "что по соевому соусу?"
         case coaching(String, AILifeCoach.LifeCategory) // "качать плечи" → фитнес-план
         case delegateTask(String, String)       // "поставь задачу {title} пользователю {user}"
+        case calendarQuery(String)             // "какие встречи сегодня?" / "когда я свободен?"
     }
     
     /// Определяет намерение пользователя по тексту сообщения.
     func detectIntent(_ message: String) -> UserIntent {
         let lower = message.lowercased()
         
-        // 1. Meeting briefing
+        // 1. Meeting briefing (ru + en)
         let briefingPatterns = ["подготовь выдержку", "подготовь брифинг", "что по встрече",
                                "инфо по встрече", "подготовься к встрече", "briefing for",
-                               "prepare for meeting", "выдержку по встрече"]
+                               "prepare for meeting", "выдержку по встрече",
+                               "meeting prep", "meeting summary", "meeting info", "brief me on"]
         if briefingPatterns.contains(where: { lower.contains($0) }) {
             let topic = extractTopic(from: lower, triggers: briefingPatterns)
             return .meetingBriefing(topic)
         }
         
-        // 2. Context search
+        // 2. Context search (ru + en)
         let searchPatterns = ["найди всё по", "найди все по", "что по теме", "поищи информацию",
-                             "поиск по", "собери инфо по", "search for", "find everything about"]
+                             "поиск по", "собери инфо по", "search for", "find everything about",
+                             "look up", "find info on", "research about"]
         if searchPatterns.contains(where: { lower.contains($0) }) {
             let topic = extractTopic(from: lower, triggers: searchPatterns)
             return .contextSearch(topic)
         }
         
-        // 3. Task delegation
+        // 3. Task delegation (ru + en)
         let delegatePatterns = ["поставь задачу .+ пользователю", "назначь .+ на ",
-                               "делегируй .+ ", "assign .+ to "]
+                               "делегируй .+ ", "assign .+ to ",
+                               "delegate .+ to "]
         for pattern in delegatePatterns {
             if let match = lower.range(of: pattern, options: .regularExpression) {
                 let afterMatch = String(lower[match.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -170,13 +261,15 @@ final class AIManager: ObservableObject {
             }
         }
         
-        // 4. Coaching (fitness, nutrition, learning etc.)
+        // 4. Coaching (fitness, nutrition, learning etc.) — ru + en
         let coach = AILifeCoach.shared
         let category = coach.classifyCategory(message)
         let coachingTriggers = ["план тренировк", "программа тренировк", "план занят",
                                "как качать", "упражнения для", "план питания",
                                "меню на", "план медитац", "workout plan", "exercise plan",
-                               "добавь в личные", "в личную"]
+                               "добавь в личные", "в личную",
+                               "training plan", "meal plan", "meditation plan",
+                               "fitness plan", "nutrition plan", "learning plan"]
         let isCoachingByTrigger = coachingTriggers.contains(where: { lower.contains($0) })
         let isCoachingByCategory = category != AILifeCoach.LifeCategory.other && (lower.contains("задач") || lower.contains("поставь"))
         
@@ -184,7 +277,31 @@ final class AIManager: ObservableObject {
             return .coaching(message, category)
         }
         
-        // 5. Default
+        // 5. Calendar queries (ru + en)
+        let calendarPatterns = ["какие встречи", "что в календаре", "расписание на",
+                               "мои встречи", "свободные окна", "когда я свободен",
+                               "свободное время", "покажи календарь", "ближайшие встречи",
+                               "events today", "my meetings", "what's on my calendar",
+                               "free slots", "when am i free", "schedule for",
+                               "show calendar", "upcoming meetings", "next meeting",
+                               "следующая встреча", "перенеси встречу", "отмени встречу",
+                               "создай встречу", "запланируй встречу", "добавь в календарь",
+                               "назначь встречу", "создай событие", "reschedule meeting",
+                               "cancel meeting", "create meeting", "schedule meeting",
+                               "add to calendar", "create event",
+                               "поставь встречу", "запиши встречу", "забронируй",
+                               "встреча в ", "встреча на ", "встреча с ",
+                               "событие на ", "событие в ",
+                               "поставь событие", "запиши событие",
+                               "добавь встречу", "добавь событие",
+                               "новая встреча", "новое событие",
+                               "удали встречу", "удали событие",
+                               "book meeting", "new meeting", "new event"]
+        if calendarPatterns.contains(where: { lower.contains($0) }) {
+            return .calendarQuery(message)
+        }
+        
+        // 6. Default
         return .standard
     }
     
@@ -223,11 +340,14 @@ final class AIManager: ObservableObject {
         case .delegateTask(let taskTitle, let assignee):
             return await handleDelegation(taskTitle: taskTitle, assignee: assignee)
             
+        case .calendarQuery(let query):
+            return await handleCalendarQuery(query: query, tasks: tasks)
+            
         case .standard:
             return await handleStandardCommand(message: message, tasks: tasks, date: date)
         }
     }
-    
+
     // MARK: - Intent Handlers
     
     private func handleMeetingBriefing(topic: String, tasks: [PlannerTask]) async -> AICommandResponse {
@@ -282,13 +402,105 @@ final class AIManager: ObservableObject {
     }
     
     private func handleDelegation(taskTitle: String, assignee: String) async -> AICommandResponse {
-        // TODO: реальная отправка через Telegram/WhatsApp API
+        // Call backend delegate-task endpoint
+        let url = Config.Endpoints.aiDelegateTask
+        var request = Config.authorizedRequest(url: url, method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 30
+        
+        let payload: [String: String] = [
+            "task_title": taskTitle,
+            "assignee_handle": assignee,
+            "platform": "telegram",
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+        
+        do {
+            let (data, response) = try await Config.urlSession.data(for: request)
+            if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                let status = json["status"] as? String ?? "unknown"
+                let preview = json["message_preview"] as? String ?? ""
+                let error = json["error"] as? String
+                
+                let statusText: String
+                switch status {
+                case "sent": statusText = "✅ Отправлено в Telegram"
+                case "error": statusText = "❌ Ошибка: \(error ?? "неизвестная")"
+                case "not_implemented": statusText = "⏳ Платформа пока не поддерживается"
+                default: statusText = "📋 Подготовлено"
+                }
+                
+                return AICommandResponse(
+                    response: "📤 Задача «\(taskTitle)» → \(assignee)\n\(statusText)\n\n\(preview)",
+                    actions: [AIAction(type: "delegate_task", params: [
+                        "title": taskTitle,
+                        "assignee": assignee,
+                        "status": status,
+                    ])]
+                )
+            }
+        } catch {
+            Logger.shared.warning("Delegate task error: \(error.localizedDescription)")
+        }
+        
+        // Fallback if backend unavailable
         return AICommandResponse(
-            response: "📤 Задача «\(taskTitle)» назначена пользователю \(assignee).\n(Интеграция с мессенджерами для делегирования задач будет в следующем обновлении)",
+            response: "📤 Задача «\(taskTitle)» назначена пользователю \(assignee).\n(Бэкенд недоступен — задача сохранена локально)",
             actions: [AIAction(type: "delegate_task", params: [
                 "title": taskTitle,
                 "assignee": assignee,
             ])]
+        )
+    }
+    
+    private func handleCalendarQuery(query: String, tasks: [PlannerTask]) async -> AICommandResponse {
+        let calendarCtx = eventKit.calendarContextForLLM()
+        let tasksList = tasks.prefix(15).map { "- \($0.title)\($0.isCompleted ? " ✓" : "")" }.joined(separator: "\n")
+        
+        let systemPrompt = """
+        Ты — Jarvis, AI-ассистент. Пользователь спрашивает про календарь и встречи.
+        
+        \(calendarCtx)
+
+        Текущие задачи пользователя:
+        \(tasksList.isEmpty ? "Нет задач" : tasksList)
+        Дата сейчас: \(Self.currentDateTimeForLLM())
+        Часовой пояс пользователя: \(Self.currentTimezoneOffset())
+
+        ВАЖНО: Все даты в params возвращай СТРОГО с часовым поясом пользователя, например: "\(Self.exampleDateForLLM())".
+        Когда пользователь говорит "на 10", "на 11", "в 10 утра" — это ЛОКАЛЬНОЕ время.
+
+        Если пользователь просит СОЗДАТЬ встречу/событие — верни ТОЛЬКО JSON без лишнего текста:
+        {"response": "✅ Встреча создана", "actions": [{"type": "create_event", "params": {"title": "...", "date": "ISO8601+TZ", "end_date": "ISO8601+TZ", "location": "...", "notes": "..."}}]}
+        Если просит УДАЛИТЬ встречу — верни ТОЛЬКО JSON:
+        {"response": "🗑 Встреча удалена", "actions": [{"type": "delete_event", "params": {"title": "название встречи для поиска"}}]}
+        Если просит ПЕРЕНЕСТИ встречу — верни ТОЛЬКО JSON:
+        {"response": "📅 Встреча перенесена", "actions": [{"type": "reschedule_event", "params": {"title": "...", "new_date": "ISO8601+TZ", "new_end_date": "ISO8601+TZ"}}]}
+        Если просит найти свободное время — ответь текстом, используя данные о свободных окнах из календаря выше.
+        Иначе просто ответь на вопрос о расписании, используя данные из календаря.
+
+        КРИТИЧНО: Когда нужно действие (создать/удалить/перенести) — отвечай СТРОГО JSON без пояснений вокруг.
+        Отвечай по-русски, кратко и по делу.
+        """
+        
+        // 1. Gemini — основной (встроенный ключ)
+        if gemini.isConfigured {
+            var messages = conversationHistory
+            messages.append((role: "user", content: query))
+            if let text = await gemini.chat(messages: messages, systemPrompt: systemPrompt, temperature: 0.3, maxTokens: 1500) {
+                addToHistory(user: query, assistant: text)
+                if let response = extractJSON(from: text) {
+                    return response
+                }
+                return AICommandResponse(response: text, actions: nil)
+            }
+        }
+        
+        // Offline fallback — just show raw calendar context
+        return AICommandResponse(
+            response: "📅 Расписание:\n\n\(calendarCtx)",
+            actions: nil
         )
     }
     
@@ -304,6 +516,15 @@ final class AIManager: ObservableObject {
             return response
         }
 
+        // 1. Gemini — основной (встроенный ключ)
+        if gemini.isConfigured {
+            if let response = await sendToGemini(message: message, tasks: tasks) {
+                lastCommandResponse = response
+                return response
+            }
+        }
+        
+        // 2. Try backend /ai/command
         let taskDicts: [[String: Any]] = tasks.prefix(30).map { t in
             [
                 "title": t.title,
@@ -314,25 +535,14 @@ final class AIManager: ObservableObject {
                 "isInbox": t.isInbox,
             ]
         }
-        
-        let dateStr = ISO8601DateFormatter().string(from: date)
-        
         let body: [String: Any] = [
             "message": message,
             "context": [
                 "tasks": taskDicts,
-                "date": dateStr,
+                "date": ISO8601DateFormatter().string(from: date),
             ]
         ]
-        
-        // Try backend /ai/command first (which uses Ollama)
         if let response = await sendToBackend(body) {
-            lastCommandResponse = response
-            return response
-        }
-        
-        // Fallback: direct Ollama
-        if let response = await sendDirectOllama(message: message, tasks: tasks) {
             lastCommandResponse = response
             return response
         }
@@ -349,16 +559,15 @@ final class AIManager: ObservableObject {
     
     private func sendToBackend(_ body: [String: Any]) async -> AICommandResponse? {
         let url = Config.Endpoints.aiCommand
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
+        var request = Config.authorizedRequest(url: url, method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 60
+        request.timeoutInterval = 15  // Быстрый таймаут — не заставляем юзера ждать
         
         guard let jsonData = try? JSONSerialization.data(withJSONObject: body) else { return nil }
         request.httpBody = jsonData
         
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Config.urlSession.data(for: request)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
                 Logger.shared.warning("AI command backend returned non-200")
                 return nil
@@ -370,81 +579,63 @@ final class AIManager: ObservableObject {
         }
     }
     
-    private func sendDirectOllama(message: String, tasks: [PlannerTask]) async -> AICommandResponse? {
-        let modelName = UserDefaults.standard.string(forKey: Config.Storage.ollamaModelKey) ?? Config.Ollama.defaultModelName
-        let url = Config.Endpoints.ollamaBase.appendingPathComponent("api/chat")
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 60
+    private func sendToGemini(message: String, tasks: [PlannerTask]) async -> AICommandResponse? {
+        let systemPrompt = buildStandardSystemPrompt(tasks: tasks)
         
-        let tasksList = tasks.prefix(20).map { "- \($0.title)\($0.isCompleted ? " ✓" : "")" }.joined(separator: "\n")
+        // Build messages with conversation history for context retention
+        var messages = conversationHistory
+        messages.append((role: "user", content: message))
         
-        let systemPrompt = """
-        Ты — Jarvis, AI-ассистент планировщик. Пользователь управляет приложением голосом.
-
-        Краткая структура приложения и папок:
-        \(navigationContextForLLM)
-
-        Текущие задачи пользователя:
-        \(tasksList.isEmpty ? "Нет задач" : tasksList)
-        Дата сейчас: \(Date().formatted(date: .abbreviated, time: .shortened))
-
-        Если пользователь просит создать/выполнить/удалить/перенести задачу — верни JSON:
-        {"response": "текст", "actions": [{"type": "тип", "params": {}}]}
-
-        Типы: create_task, complete_task, delete_task, reschedule_task, move_task, advice, none
-        Для create_task params: title, date (ISO-8601), priority (low/medium/high), folder (inbox/today)
-        Для complete_task/delete_task: title (приблизительное название)
-        Для move_task: title, folder (inbox/today/completed/scheduled/future)
-        Для reschedule_task: title, new_date (ISO-8601)
-
-        Если это простой вопрос — отвечай текстом по-русски, кратко и полезно.
-        """
-        
-        struct OllamaChatReq: Encodable {
-            let model: String
-            let messages: [AIManager.ChatMessagePayload]
-            let stream: Bool
-        }
-        struct OllamaChatResp: Decodable {
-            let message: ChatMessagePayload?
-        }
-        
-        let payload = OllamaChatReq(
-            model: modelName,
-            messages: [
-                ChatMessagePayload(role: "system", content: systemPrompt),
-                ChatMessagePayload(role: "user", content: message),
-            ],
-            stream: false
-        )
-        
-        request.httpBody = try? JSONEncoder().encode(payload)
-        
-        do {
-            let (data, _) = try await URLSession.shared.data(for: request)
-            if let decoded = try? JSONDecoder().decode(OllamaChatResp.self, from: data),
-               let text = decoded.message?.content.trimmingCharacters(in: .whitespacesAndNewlines),
-               !text.isEmpty {
-                // Try to parse as AICommandResponse JSON (for action execution)
-                if let jsonData = text.data(using: .utf8),
-                   let cmdResponse = try? JSONDecoder().decode(AICommandResponse.self, from: jsonData) {
-                    return cmdResponse
-                }
-                return AICommandResponse(response: text)
+        if let text = await gemini.chat(messages: messages, systemPrompt: systemPrompt, temperature: 0.3, maxTokens: 1000) {
+            addToHistory(user: message, assistant: text)
+            if let response = extractJSON(from: text) {
+                return response
             }
-        } catch {
-            Logger.shared.warning("Direct Ollama error: \(error.localizedDescription)")
+            return AICommandResponse(response: text, actions: nil)
         }
         return nil
     }
     
-    // MARK: - Legacy methods (backward compatible)
-    
-    func extractTask(from input: String, referenceDate: Date) -> PlannerTask? {
-        heuristic.extractTask(from: input, referenceDate: referenceDate)
+    /// Shared system prompt for standard command handling
+    private func buildStandardSystemPrompt(tasks: [PlannerTask]) -> String {
+        let tasksList = tasks.prefix(20).map { "- \($0.title)\($0.isCompleted ? " ✓" : "")" }.joined(separator: "\n")
+        let calendarCtx = eventKit.calendarContextForLLM()
+        
+        return """
+        Ты — Jarvis, AI-ассистент планировщик. Пользователь управляет приложением голосом и текстом.
+
+        \(navigationContextForLLM)
+
+        Текущие задачи пользователя:
+        \(tasksList.isEmpty ? "Нет задач" : tasksList)
+
+        \(calendarCtx)
+
+        Дата и время сейчас: \(Self.currentDateTimeForLLM())
+
+        ВАЖНО: Все даты в params возвращай СТРОГО в формате ISO8601 С ЧАСОВЫМ ПОЯСОМ пользователя.
+        Пример: "\(Self.exampleDateForLLM())" (НЕ UTC, а локальное время пользователя!).
+        Когда пользователь говорит "на 10", "на 11", "в 10", "в 11 утра" — это ЛОКАЛЬНОЕ время.
+
+        Если пользователь просит создать/выполнить/удалить/перенести задачу или СОБЫТИЕ В КАЛЕНДАРЕ — верни СТРОГО JSON без лишнего текста:
+        {"response": "текст ответа", "actions": [{"type": "create_task", "params": {"title": "...", "date": "ISO8601+TZ"}}]}
+        Допустимые типы действий:
+        - create_task, complete_task, delete_task, reschedule_task, move_task — для задач
+        - create_event — создать событие в календаре. params: title, date (ISO8601+TZ), end_date (ISO8601+TZ), location, notes
+        - delete_event — удалить событие из календаря. params: title (название для поиска)
+        - reschedule_event — перенести событие. params: title, new_date (ISO8601+TZ), new_end_date (ISO8601+TZ)
+        - find_free_slots — найти свободные окна в календаре. params: date (ISO8601+TZ, по умолчанию сегодня), duration_minutes
+        - advice, none — для советов и информационных ответов
+
+        Когда пользователь спрашивает про встречи, расписание, свободное время — используй данные из календаря выше.
+        Когда пользователь просит создать встречу/событие — используй тип create_event.
+
+        КРИТИЧНО: Когда нужно действие (создать/удалить/перенести) — отвечай СТРОГО JSON без пояснений вокруг.
+        Иначе просто отвечай текстом кратко и по делу. По умолчанию отвечай на русском.
+        """
     }
+    
+    // MARK: - Legacy methods (backward compatible)
     
     func generateAdvice(from tasks: [PlannerTask]) -> [String] {
         heuristic.generateAdvice(from: tasks)
@@ -457,12 +648,19 @@ final class AIManager: ObservableObject {
             heuristic.generateAdvice(from: tasks).joined(separator: "\n")
         }
         
-        if !NetworkMonitor.shared.isConnected && !selectedModel.isLocal {
+        if !NetworkMonitor.shared.isConnected {
             return L10n.aiOfflineHeuristic + "\n" + heuristicFallback()
         }
         
-        if selectedModel == .ollama || selectedModel == .onDeviceLarge {
-            return await requestOllamaAdvice(tasks: tasks) ?? L10n.aiCannotConnect + "\n" + heuristicFallback()
+        let tasksList = tasks.prefix(20).map { "- \($0.title) \($0.isCompleted ? "(выполнено)" : "")" }.joined(separator: "\n")
+        let prompt = "Дай 3-5 кратких практических советов по планированию дня. Задачи:\n\(tasksList)"
+        let systemPrompt = "Ты — AI-планировщик Jarvis. Отвечай по-русски, кратко и конкретно."
+        
+        // Gemini — основной (встроенный ключ)
+        if gemini.isConfigured {
+            if let result = await gemini.generate(message: prompt, systemPrompt: systemPrompt) {
+                return result
+            }
         }
         
         // Cloud models go through backend
@@ -474,8 +672,7 @@ final class AIManager: ObservableObject {
         encoder.dateEncodingStrategy = .iso8601
         
         let url = Config.Endpoints.llmPlan
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
+        var request = Config.authorizedRequest(url: url, method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 30
         
@@ -483,7 +680,7 @@ final class AIManager: ObservableObject {
         request.httpBody = try? encoder.encode(payload)
         
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Config.urlSession.data(for: request)
             if let httpResponse = response as? HTTPURLResponse, !(200...299).contains(httpResponse.statusCode) {
                 Logger.shared.warning("LLM API returned status \(httpResponse.statusCode)")
                 return L10n.aiServerError + "\n" + heuristicFallback()
@@ -494,144 +691,18 @@ final class AIManager: ObservableObject {
         }
     }
     
-    private func requestOllamaAdvice(tasks: [PlannerTask]) async -> String? {
-        let modelName = UserDefaults.standard.string(forKey: Config.Storage.ollamaModelKey) ?? Config.Ollama.defaultModelName
-        let prompt = buildPromptForOllama(tasks: tasks)
-        
-        let url = Config.Endpoints.ollamaBase.appendingPathComponent("api/generate")
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 30
-        
-        struct OllamaRequest: Encodable { let model: String; let prompt: String; let stream: Bool }
-        struct OllamaResponse: Decodable { let response: String }
-        
-        request.httpBody = try? JSONEncoder().encode(OllamaRequest(model: modelName, prompt: prompt, stream: false))
-        
-        do {
-            let (data, _) = try await URLSession.shared.data(for: request)
-            let text = (try? JSONDecoder().decode(OllamaResponse.self, from: data))?.response.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return text.isEmpty ? nil : text
-        } catch {
-            return nil
-        }
-    }
-    
-    private func buildPromptForOllama(tasks: [PlannerTask]) -> String {
-        let list = tasks.prefix(20).map { "- \($0.title) \($0.isCompleted ? "(выполнено)" : "")" }.joined(separator: "\n")
-        return """
-        Ты — AI-планировщик Jarvis. Дай 3-5 кратких практических советов по-русски.
-        Задачи: \(list)
-        """
-    }
-    
-    // MARK: - Chat
-    
-    struct ChatMessagePayload: Encodable, Decodable {
-        let role: String
-        let content: String
-    }
-    
-    /// Отправить сообщения в чат. Работает через бэкенд (Ollama) или напрямую.
-    func sendChatMessage(messages: [(role: String, content: String)]) async -> String? {
-        guard !messages.isEmpty else { return nil }
-        
-        // Try backend proxy first (supports all models)
-        if let result = await sendChatViaBackend(messages: messages) {
-            return result
-        }
-        
-        // Direct Ollama fallback
-        if selectedModel == .ollama || selectedModel == .onDeviceLarge {
-            return await requestOllamaChat(messages: messages)
-        }
-        
-        if !NetworkMonitor.shared.isConnected {
-            return L10n.aiNoNetwork
-        }
-        
-        return L10n.aiBackendUnavailable
-    }
-    
-    private func sendChatViaBackend(messages: [(role: String, content: String)]) async -> String? {
-        let modelName = UserDefaults.standard.string(forKey: Config.Storage.ollamaModelKey) ?? Config.Ollama.defaultModelName
-        
-        let url = Config.Endpoints.llmChat
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 120
-        
-        struct OllamaChatRequest: Encodable {
-            let model: String
-            let messages: [ChatMessagePayload]
-            let stream: Bool
-        }
-        struct OllamaChatResponse: Decodable {
-            let message: ChatMessagePayload?
-        }
-        
-        let payload = OllamaChatRequest(
-            model: modelName,
-            messages: messages.map { ChatMessagePayload(role: $0.role, content: $0.content) },
-            stream: false
-        )
-        request.httpBody = try? JSONEncoder().encode(payload)
-        
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return nil }
-            let decoded = try? JSONDecoder().decode(OllamaChatResponse.self, from: data)
-            return decoded?.message?.content.trimmingCharacters(in: .whitespacesAndNewlines)
-        } catch {
-            return nil
-        }
-    }
-    
-    private func requestOllamaChat(messages: [(role: String, content: String)]) async -> String? {
-        let modelName = UserDefaults.standard.string(forKey: Config.Storage.ollamaModelKey) ?? Config.Ollama.defaultModelName
-        let url = Config.Endpoints.ollamaBase.appendingPathComponent("api/chat")
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 60
-        
-        struct Req: Encodable { let model: String; let messages: [ChatMessagePayload]; let stream: Bool }
-        struct Resp: Decodable { let message: ChatMessagePayload? }
-        
-        let payload = Req(model: modelName, messages: messages.map { ChatMessagePayload(role: $0.role, content: $0.content) }, stream: false)
-        request.httpBody = try? JSONEncoder().encode(payload)
-        
-        do {
-            let (data, _) = try await URLSession.shared.data(for: request)
-            let text = (try? JSONDecoder().decode(Resp.self, from: data))?.message?.content.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return text.isEmpty ? nil : text
-        } catch {
-            return "Ollama не отвечает. Проверьте: ollama serve"
-        }
-    }
-    
     // MARK: - Check services status
     
-    func checkOllamaStatus() async -> Bool {
+    func checkBackendStatus() async -> (running: Bool, llmConnected: Bool) {
+        struct HealthResp: Decodable { let status: String; let llm: Bool? }
         do {
-            let url = Config.Endpoints.ollamaBase.appendingPathComponent("api/version")
-            let (_, response) = try await URLSession.shared.data(from: url)
-            return (response as? HTTPURLResponse)?.statusCode == 200
-        } catch {
-            return false
-        }
-    }
-    
-    func checkBackendStatus() async -> (running: Bool, ollamaConnected: Bool) {
-        struct HealthResp: Decodable { let status: String; let ollama: Bool? }
-        do {
-            let url = URL(string: "https://localhost:8000/health")!
-            let (data, response) = try await URLSession.shared.data(from: url)
+            guard let url = URL(string: "\(Config.backendBase)/health") else { return (false, false) }
+            var request = Config.authorizedRequest(url: url)
+            request.timeoutInterval = 5
+            let (data, response) = try await Config.urlSession.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { return (false, false) }
             let health = try? JSONDecoder().decode(HealthResp.self, from: data)
-            return (true, health?.ollama ?? false)
+            return (true, health?.llm ?? false)
         } catch {
             return (false, false)
         }
@@ -640,7 +711,8 @@ final class AIManager: ObservableObject {
     func checkGoogleAuthStatus() async -> Bool {
         struct AuthResp: Decodable { let authorized: Bool }
         do {
-            let (data, response) = try await URLSession.shared.data(from: Config.Endpoints.authStatus)
+            let request = Config.authorizedRequest(url: Config.Endpoints.authStatus)
+            let (data, response) = try await Config.urlSession.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { return false }
             return (try? JSONDecoder().decode(AuthResp.self, from: data))?.authorized ?? false
         } catch {

@@ -30,36 +30,62 @@ final class DataPersistence: ObservableObject {
             WaterEntity.self
         ])
         
-        let config = ModelConfiguration(
-            "JarvisStore",
-            schema: schema,
-            isStoredInMemoryOnly: false,
-            cloudKitDatabase: .automatic
-        )
-        
-        do {
-            container = try ModelContainer(for: schema, configurations: [config])
-            context = ModelContext(container)
-            context.autosaveEnabled = true
-        } catch {
-            // Fallback: in-memory only (no CloudKit)
-            Logger.shared.error("Failed to create ModelContainer with CloudKit: \(error.localizedDescription). Falling back to local-only.")
-            let fallbackConfig = ModelConfiguration(
-                "JarvisStore",
-                schema: schema,
-                isStoredInMemoryOnly: false,
-                cloudKitDatabase: .none
-            )
-            do {
-                container = try ModelContainer(for: schema, configurations: [fallbackConfig])
-                context = ModelContext(container)
-                context.autosaveEnabled = true
-            } catch {
-                fatalError("DataPersistence: cannot create ModelContainer: \(error)")
+        // Try CloudKit first, then local-only, then in-memory as last resort
+        if let c = Self.makeContainer(schema: schema, cloudKit: .automatic, inMemory: false) {
+            container = c
+        } else if let c = Self.makeContainer(schema: schema, cloudKit: .none, inMemory: false) {
+            Logger.shared.error("DataPersistence: CloudKit unavailable, using local-only store.")
+            container = c
+        } else {
+            // Corrupted store on disk — delete and retry, then fall back to in-memory
+            Self.deleteStoreFiles(named: "JarvisStore")
+            if let c = Self.makeContainer(schema: schema, cloudKit: .none, inMemory: false) {
+                Logger.shared.error("DataPersistence: Deleted corrupted store, recreated local-only.")
+                container = c
+            } else if let c = Self.makeContainer(schema: schema, cloudKit: .none, inMemory: true) {
+                Logger.shared.error("DataPersistence: Using in-memory store as last resort.")
+                container = c
+            } else {
+                // Absolute last resort — minimal in-memory container
+                container = try! ModelContainer(for: schema, configurations: [
+                    ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
+                ])
+                Logger.shared.error("DataPersistence: Emergency in-memory container created.")
             }
         }
         
+        context = ModelContext(container)
+        context.autosaveEnabled = true
         isMigrated = UserDefaults.standard.bool(forKey: Self.migrationKey)
+    }
+    
+    // MARK: - Container Factory
+    
+    private static func makeContainer(schema: Schema, cloudKit: ModelConfiguration.CloudKitDatabase, inMemory: Bool) -> ModelContainer? {
+        let config = ModelConfiguration(
+            "JarvisStore",
+            schema: schema,
+            isStoredInMemoryOnly: inMemory,
+            cloudKitDatabase: cloudKit
+        )
+        return try? ModelContainer(for: schema, configurations: [config])
+    }
+    
+    /// Remove corrupted SQLite files from the default SwiftData location.
+    private static func deleteStoreFiles(named name: String) {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let storeDir = appSupport.appendingPathComponent("default.store")
+        let suffixes = ["", "-wal", "-shm"]
+        for suffix in suffixes {
+            let file = storeDir.appendingPathExtension(suffix)
+            try? FileManager.default.removeItem(at: file)
+        }
+        // Also try the named store
+        for suffix in suffixes {
+            let file = appSupport.appendingPathComponent("\(name).store\(suffix)")
+            try? FileManager.default.removeItem(at: file)
+        }
+        Logger.shared.info("DataPersistence: Deleted store files for '\(name)'")
     }
     
     // MARK: - Migration from UserDefaults
@@ -157,25 +183,26 @@ final class DataPersistence: ObservableObject {
     }
     
     func saveTasks(_ tasks: [PlannerTask]) {
-        for task in tasks {
-            let predicate = #Predicate<TaskEntity> { entity in
-                entity.taskID == task.id
-            }
-            var descriptor = FetchDescriptor<TaskEntity>(predicate: predicate)
-            descriptor.fetchLimit = 1
+        do {
+            // O(1) lookup: fetch ALL existing entities once, build dictionary
+            let existing = try context.fetch(FetchDescriptor<TaskEntity>())
+            let existingByID = Dictionary(uniqueKeysWithValues: existing.map { ($0.taskID, $0) })
             
-            do {
-                if let existing = try context.fetch(descriptor).first {
-                    existing.update(from: task)
+            let incomingIDs = Set(tasks.map(\.id))
+            
+            for task in tasks {
+                if let entity = existingByID[task.id] {
+                    entity.update(from: task)
                 } else {
                     context.insert(TaskEntity(from: task))
                 }
-            } catch {
-                Logger.shared.error("Failed to upsert task \(task.id): \(error.localizedDescription)")
             }
-        }
-        
-        do {
+            
+            // Remove entities that no longer exist in the task list
+            for entity in existing where !incomingIDs.contains(entity.taskID) {
+                context.delete(entity)
+            }
+            
             try context.save()
         } catch {
             Logger.shared.error("Failed to batch save tasks: \(error.localizedDescription)")
@@ -329,6 +356,66 @@ final class DataPersistence: ObservableObject {
             try context.save()
         } catch {
             Logger.shared.error("Failed to delete project: \(error.localizedDescription)")
+        }
+    }
+    
+    // MARK: - Batch Save Operations (O(1) fetch + dictionary lookup instead of N individual fetches)
+    
+    /// Batch-save all categories in a single transaction.
+    /// Pre-fetches all existing entities into a dictionary for O(1) lookup.
+    func saveCategories(_ categories: [TaskCategory]) {
+        do {
+            let existing = try context.fetch(FetchDescriptor<CategoryEntity>())
+            let existingByID = Dictionary(uniqueKeysWithValues: existing.map { ($0.categoryID, $0) })
+            
+            for category in categories {
+                if let entity = existingByID[category.id] {
+                    entity.update(from: category)
+                } else {
+                    context.insert(CategoryEntity(from: category))
+                }
+            }
+            try context.save()
+        } catch {
+            Logger.shared.error("Failed to batch-save categories: \(error.localizedDescription)")
+        }
+    }
+    
+    /// Batch-save all tags in a single transaction.
+    func saveTags(_ tags: [TaskTag]) {
+        do {
+            let existing = try context.fetch(FetchDescriptor<TagEntity>())
+            let existingByID = Dictionary(uniqueKeysWithValues: existing.map { ($0.tagID, $0) })
+            
+            for tag in tags {
+                if let entity = existingByID[tag.id] {
+                    entity.update(from: tag)
+                } else {
+                    context.insert(TagEntity(from: tag))
+                }
+            }
+            try context.save()
+        } catch {
+            Logger.shared.error("Failed to batch-save tags: \(error.localizedDescription)")
+        }
+    }
+    
+    /// Batch-save all projects in a single transaction.
+    func saveProjects(_ projects: [Project]) {
+        do {
+            let existing = try context.fetch(FetchDescriptor<ProjectEntity>())
+            let existingByID = Dictionary(uniqueKeysWithValues: existing.map { ($0.projectID, $0) })
+            
+            for project in projects {
+                if let entity = existingByID[project.id] {
+                    entity.update(from: project)
+                } else {
+                    context.insert(ProjectEntity(from: project))
+                }
+            }
+            try context.save()
+        } catch {
+            Logger.shared.error("Failed to batch-save projects: \(error.localizedDescription)")
         }
     }
 }

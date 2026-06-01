@@ -9,6 +9,15 @@ enum TimelineViewMode: String, CaseIterable, Identifiable {
     case month = "Month"
     
     var id: String { rawValue }
+    
+    var localizedName: String {
+        switch self {
+        case .day: return L10n.viewModeDay
+        case .multiDay: return L10n.viewModeMultiDay
+        case .week: return L10n.viewModeWeek
+        case .month: return L10n.viewModeMonth
+        }
+    }
 }
 
 // MARK: - Timeline Block Frames (для расчёта часа при дропе)
@@ -56,11 +65,11 @@ struct TimelinePanelView: View {
             Group {
                 switch viewMode {
                 case .day:
-                    ScrollView { timelineContent }
+                    timelineDayScrollView
                 case .multiDay:
-                    ScrollView { multiDayContent }
+                    multiDayScrollView
                 case .week:
-                    ScrollView { weekContent }
+                    weekScrollView
                 case .month:
                     monthContent
                 }
@@ -105,7 +114,7 @@ struct TimelinePanelView: View {
                         viewMode = mode
                     }
                 }) {
-                    Text(mode.rawValue)
+                    Text(mode.localizedName)
                         .font(.system(size: 13, weight: viewMode == mode ? .semibold : .medium))
                         .foregroundColor(viewMode == mode ? .white : theme.textSecondary)
                         .padding(.horizontal, 14)
@@ -212,13 +221,59 @@ struct TimelinePanelView: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(date.formatted(.dateTime.weekday(.wide))), \(taskCount) задач")
+        .accessibilityLabel("\(date.formatted(.dateTime.weekday(.wide))), \(taskCount) \(L10n.tasksCount)")
         .dropDestination(for: String.self) { items, _ in
             if let taskID = items.first, let uuid = UUID(uuidString: taskID) {
                 moveTaskToDate(uuid, date: date)
                 return true
             }
             return false
+        }
+    }
+    
+    // MARK: - Timeline Day ScrollView (auto-scrolls to first event)
+    
+    private var timelineDayScrollView: some View {
+        let dayTasks = store.tasksForDay(selectedDate).filter { !$0.isInbox && !$0.isCompleted && !$0.isAllDay }
+        let firstHour: Int = {
+            guard let first = dayTasks.sorted(by: { $0.date < $1.date }).first else {
+                // No tasks — scroll to current hour (or 8am if not today)
+                if Calendar.current.isDateInToday(selectedDate) {
+                    return max(0, Calendar.current.component(.hour, from: Date()) - 1)
+                }
+                return 8
+            }
+            return max(0, Calendar.current.component(.hour, from: first.date) - 1)
+        }()
+        
+        return ScrollViewReader { proxy in
+            ScrollView {
+                timelineContent
+            }
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        proxy.scrollTo("timeline_hour_\(firstHour)", anchor: .top)
+                    }
+                }
+            }
+            .onChange(of: selectedDate) { _, _ in
+                let newFirstHour: Int = {
+                    let tasks = store.tasksForDay(selectedDate).filter { !$0.isInbox && !$0.isCompleted && !$0.isAllDay }
+                    guard let first = tasks.sorted(by: { $0.date < $1.date }).first else {
+                        if Calendar.current.isDateInToday(selectedDate) {
+                            return max(0, Calendar.current.component(.hour, from: Date()) - 1)
+                        }
+                        return 8
+                    }
+                    return max(0, Calendar.current.component(.hour, from: first.date) - 1)
+                }()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        proxy.scrollTo("timeline_hour_\(newFirstHour)", anchor: .top)
+                    }
+                }
+            }
         }
     }
     
@@ -250,6 +305,7 @@ struct TimelinePanelView: View {
                             .frame(height: 1)
                             .frame(maxWidth: .infinity)
                     }
+                    .id("timeline_hour_\(hour)")
                     .frame(height: hourRowHeight)
                     .contentShape(Rectangle())
                     .dropDestination(for: String.self) { items, _ in
@@ -383,6 +439,32 @@ struct TimelinePanelView: View {
         .animation(.easeOut(duration: 0.25), value: dayTasks.map { "\($0.id)\($0.date.timeIntervalSince1970)" })
     }
     
+    // MARK: - Multi-Day ScrollView (auto-scrolls to first event)
+    
+    private var multiDayScrollView: some View {
+        let firstHour = firstEventHourAcrossDays(daysOffset: -1...2)
+        return ScrollViewReader { proxy in
+            ScrollView {
+                multiDayContent
+            }
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        proxy.scrollTo("multi_hour_\(firstHour)", anchor: .top)
+                    }
+                }
+            }
+            .onChange(of: selectedDate) { _, _ in
+                let newHour = firstEventHourAcrossDays(daysOffset: -1...2)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        proxy.scrollTo("multi_hour_\(newHour)", anchor: .top)
+                    }
+                }
+            }
+        }
+    }
+    
     // MARK: - Multi-Day Content (4 days with hour grid, Structured-style)
     
     private var multiDayContent: some View {
@@ -441,6 +523,7 @@ struct TimelinePanelView: View {
                                 .fill(theme.hourLine)
                                 .frame(height: 0.5)
                         }
+                        .id("multi_hour_\(hour)")
                         .frame(height: hourRowHeight)
                     }
                 }
@@ -550,11 +633,37 @@ struct TimelinePanelView: View {
         .accessibilityLabel("\(task.title), \(shortTimeLabel(task.date))")
     }
     
+    // MARK: - Week ScrollView (auto-scrolls to first event)
+    
+    private var weekScrollView: some View {
+        let firstHour = firstEventHourAcrossDays(daysOffset: 0...6)
+        return ScrollViewReader { proxy in
+            ScrollView {
+                weekContent
+            }
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        proxy.scrollTo("week_hour_\(firstHour)", anchor: .top)
+                    }
+                }
+            }
+            .onChange(of: selectedDate) { _, _ in
+                let newHour = firstEventHourAcrossDays(daysOffset: 0...6)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        proxy.scrollTo("week_hour_\(newHour)", anchor: .top)
+                    }
+                }
+            }
+        }
+    }
+    
     // MARK: - Week Content (7-day hour grid, Structured-style)
     
     private var weekContent: some View {
         let cal = Calendar.current
-        let weekStart = cal.date(from: cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: selectedDate))!
+        let weekStart = cal.date(from: cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: selectedDate)) ?? selectedDate
         let days = (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: weekStart) }
         let hourRowHeight = JarvisTheme.Dimensions.hourRowHeight
         let startHour = 0
@@ -612,6 +721,7 @@ struct TimelinePanelView: View {
                                 .fill(theme.hourLine)
                                 .frame(height: 0.5)
                         }
+                        .id("week_hour_\(hour)")
                         .frame(height: hourRowHeight)
                     }
                 }
@@ -719,11 +829,11 @@ struct TimelinePanelView: View {
     private var monthContent: some View {
         let cal = Calendar.current
         let monthRange = cal.range(of: .day, in: .month, for: selectedDate) ?? 1..<31
-        let firstOfMonth = cal.date(from: cal.dateComponents([.year, .month], from: selectedDate))!
+        let firstOfMonth = cal.date(from: cal.dateComponents([.year, .month], from: selectedDate)) ?? selectedDate
         let firstWeekday = cal.component(.weekday, from: firstOfMonth)
         let emptyCells = (firstWeekday - cal.firstWeekday + 7) % 7
         
-        let weekdayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+        let weekdayNames = Calendar.current.shortWeekdaySymbols
         
         return VStack(spacing: 0) {
             // Weekday header row
@@ -909,8 +1019,32 @@ struct TimelinePanelView: View {
     
     private func getCurrentWeekDays() -> [Date] {
         let calendar = Calendar.current
-        let startOfWeek = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: selectedDate))!
+        let startOfWeek = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: selectedDate)) ?? selectedDate
         return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: startOfWeek) }
+    }
+    
+    /// Finds the earliest event hour across a range of days relative to selectedDate.
+    /// Returns 1 hour before the first event, or current hour (today) / 8 (other days).
+    private func firstEventHourAcrossDays(daysOffset: ClosedRange<Int>) -> Int {
+        let cal = Calendar.current
+        var earliest: Int?
+        for offset in daysOffset {
+            guard let date = cal.date(byAdding: .day, value: offset, to: selectedDate) else { continue }
+            let dayTasks = store.tasksForDay(date).filter { !$0.isInbox && !$0.isCompleted && !$0.isAllDay }
+            if let first = dayTasks.sorted(by: { $0.date < $1.date }).first {
+                let hour = cal.component(.hour, from: first.date)
+                if earliest == nil || hour < earliest! {
+                    earliest = hour
+                }
+            }
+        }
+        if let e = earliest {
+            return max(0, e - 1)
+        }
+        if Calendar.current.isDateInToday(selectedDate) {
+            return max(0, Calendar.current.component(.hour, from: Date()) - 1)
+        }
+        return 8
     }
     
     private func moveTaskToDate(_ taskID: UUID, date: Date) {

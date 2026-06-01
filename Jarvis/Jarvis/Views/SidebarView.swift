@@ -29,14 +29,9 @@ enum AppMode: String, CaseIterable, Identifiable {
         }
     }
     
-    /// Sections visible in this mode
+    /// Sections visible in this mode, filtered by ModuleManager
     var visibleSections: [NavigationSection] {
-        switch self {
-        case .work:
-            return [.inbox, .today, .scheduled, .completed, .all, .calendarSection, .mailSection, .messengers, .analytics, .projects, .chat]
-        case .personal:
-            return [.today, .health, .futurePlans, .scheduled, .completed, .calendarSection]
-        }
+        ModuleManager.shared.visibleSections(for: self)
     }
 }
 
@@ -56,6 +51,12 @@ enum NavigationSection: String, CaseIterable, Identifiable {
     case analytics = "analytics"
     case projects = "projects"
     case chat = "chat"
+    case kanban = "kanban"
+    case templates = "templates"
+    case habits = "habits"
+    case focus = "focus"
+    case systemCalendar = "system_calendar"
+    case registries = "registries"
     
     var id: String { rawValue }
     
@@ -74,6 +75,12 @@ enum NavigationSection: String, CaseIterable, Identifiable {
         case .analytics: return L10n.sectionAnalytics
         case .projects: return L10n.sectionProjects
         case .chat: return L10n.sectionNeural
+        case .kanban: return L10n.kanbanBoard
+        case .templates: return L10n.templates
+        case .habits: return L10n.habitsTitle
+        case .focus: return L10n.focusTitle
+        case .systemCalendar: return L10n.systemCalendarTitle
+        case .registries: return L10n.registries
         }
     }
     
@@ -92,6 +99,12 @@ enum NavigationSection: String, CaseIterable, Identifiable {
         case .analytics: return "chart.bar.xaxis"
         case .projects: return "folder.fill"
         case .chat: return "brain.head.profile"
+        case .kanban: return "rectangle.split.3x1.fill"
+        case .templates: return "doc.on.doc.fill"
+        case .habits: return "repeat.circle.fill"
+        case .focus: return "timer"
+        case .systemCalendar: return "calendar.badge.exclamationmark"
+        case .registries: return "tablecells"
         }
     }
     
@@ -110,6 +123,12 @@ enum NavigationSection: String, CaseIterable, Identifiable {
         case .analytics: return JarvisTheme.accentTeal
         case .projects: return JarvisTheme.accentOrange
         case .chat: return JarvisTheme.accentPurple
+        case .kanban: return JarvisTheme.accentTeal
+        case .templates: return JarvisTheme.accentOrange
+        case .habits: return JarvisTheme.accentGreen
+        case .focus: return JarvisTheme.accent
+        case .systemCalendar: return JarvisTheme.accentBlue
+        case .registries: return JarvisTheme.accentTeal
         }
     }
 }
@@ -130,6 +149,7 @@ struct SidebarView: View {
     @StateObject private var userProfile = UserProfile.shared
     @State private var showAddCategorySheet = false
     @State private var editingCategory: TaskCategory?
+    @State private var showModuleSettings = false
     
     private var visibleSections: [NavigationSection] {
         appMode.visibleSections
@@ -237,6 +257,26 @@ struct SidebarView: View {
                     .padding(.horizontal, 12)
                     .padding(.top, 12)
 
+                    // Customize sidebar button
+                    Button(action: { showModuleSettings = true }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "slider.horizontal.3")
+                                .font(.system(size: 12, weight: .medium))
+                            Text(L10n.customizeSidebar)
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        .foregroundColor(theme.textTertiary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(theme.divider, lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 4)
+
                     categoriesSection
                         .padding(.horizontal, 12)
                 }
@@ -260,6 +300,27 @@ struct SidebarView: View {
         .background(theme.sidebarBackground)
         .sheet(isPresented: $showAddCategorySheet) {
             AddCategorySheet(theme: theme, category: editingCategory)
+        }
+        .sheet(isPresented: $showModuleSettings) {
+            NavigationStack {
+                SidebarModulesSettingsView(theme: theme)
+                    .navigationTitle(L10n.sidebarModules)
+                    #if os(iOS)
+                    .navigationBarTitleDisplayMode(.inline)
+                    #endif
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button(L10n.done) { showModuleSettings = false }
+                        }
+                    }
+            }
+            .presentationDetents([.large])
+            .onDisappear {
+                // Reset selected section if it was disabled
+                if !visibleSections.contains(selectedSection) {
+                    selectedSection = .today
+                }
+            }
         }
     }
     
@@ -529,6 +590,8 @@ struct SidebarNavigationRow: View {
             if case .analytics = section { return false }
             if case .projects = section { return false }
             if case .health = section { return false }
+            if case .kanban = section { return false }
+            if case .templates = section { return false }
             guard let taskID = items.first, let uuid = UUID(uuidString: taskID) else { return false }
             onDrop(uuid)
             return true

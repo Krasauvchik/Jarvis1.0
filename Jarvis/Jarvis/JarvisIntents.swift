@@ -4,21 +4,21 @@ import SwiftUI
 // MARK: - Add Task Intent
 
 struct AddJarvisTaskIntent: AppIntent {
-    static var title: LocalizedStringResource = "Добавить задачу в Jarvis"
-    static var description = IntentDescription("Создаёт новую задачу в планнере Jarvis.")
+    static var title: LocalizedStringResource = "intent_add_task_title"
+    static var description = IntentDescription("intent_add_task_description")
     static let supportedModes: IntentModes = [.foreground]
 
-    @Parameter(title: "Название задачи", description: "Текст задачи")
+    @Parameter(title: "intent_param_task_title", description: "intent_param_task_title_desc")
     var title: String
 
-    @Parameter(title: "В Inbox", description: "Добавить без даты (в папку Inbox)")
+    @Parameter(title: "intent_param_inbox", description: "intent_param_inbox_desc")
     var isInbox: Bool
 
-    @Parameter(title: "Дата и время", description: "Когда выполнить")
+    @Parameter(title: "intent_param_date", description: "intent_param_date_desc")
     var date: Date?
 
     static var parameterSummary: some ParameterSummary {
-        Summary("Добавить задачу \(\.$title) в Jarvis") {
+        Summary("intent_add_summary \(\.$title)") {
             \.$isInbox
             \.$date
         }
@@ -42,12 +42,11 @@ struct AddJarvisTaskIntent: AppIntent {
 // MARK: - Show Today Intent
 
 struct ShowJarvisTodayIntent: AppIntent {
-    static var title: LocalizedStringResource = "Показать задачи Jarvis на сегодня"
-    static var description = IntentDescription("Открывает Jarvis и показывает задачи на сегодня.")
+    static var title: LocalizedStringResource = "intent_show_today_title"
+    static var description = IntentDescription("intent_show_today_description")
     static let supportedModes: IntentModes = [.foreground]
 
     func perform() async throws -> some IntentResult {
-        // Открытие приложения — система откроет app. Доп. логика (например открыть на «Сегодня») может быть через URL scheme или UserActivity.
         return .result()
     }
 }
@@ -60,20 +59,20 @@ struct JarvisShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: AddJarvisTaskIntent(),
             phrases: [
-                "Добавь задачу в \(.applicationName)",
-                "Создай задачу в \(.applicationName)",
-                "Новая задача в \(.applicationName)"
+                "Add task to \(.applicationName)",
+                "Create task in \(.applicationName)",
+                "New task in \(.applicationName)"
             ],
-            shortTitle: "Добавить задачу",
+            shortTitle: "intent_shortcut_add_task",
             systemImageName: "plus.circle.fill"
         )
         AppShortcut(
             intent: ShowJarvisTodayIntent(),
             phrases: [
-                "Покажи задачи в \(.applicationName)",
-                "Что на сегодня в \(.applicationName)"
+                "Show tasks in \(.applicationName)",
+                "What's today in \(.applicationName)"
             ],
-            shortTitle: "Задачи на сегодня",
+            shortTitle: "intent_shortcut_show_today",
             systemImageName: "calendar"
         )
     }

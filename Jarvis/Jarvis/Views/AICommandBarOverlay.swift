@@ -82,34 +82,47 @@ struct AICommandBar: View {
             micButton
 
             if isExpanded {
-                // Text input
-                TextField(L10n.askJarvis, text: $inputText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 14))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(theme.cardBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(isVoiceActive ? JarvisTheme.accentOrange : theme.divider, lineWidth: isVoiceActive ? 1.5 : 0.5)
+                if speech.isRecording {
+                    // Live waveform + transcript while recording
+                    CompactWaveformView(
+                        levels: speech.audioLevels,
+                        isActive: true,
+                        transcript: speech.transcript,
+                        onStop: { toggleVoice() }
                     )
-                    .onSubmit { sendQuickCommand() }
-                    .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .leading)))
+                    .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .leading)))
+                } else {
+                    // Text input
+                    TextField(L10n.askJarvis, text: $inputText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 14))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(theme.cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(theme.divider, lineWidth: 0.5)
+                        )
+                        .onSubmit { sendQuickCommand() }
+                        .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .leading)))
 
-                // Send
-                Button(action: sendQuickCommand) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 26))
-                        .foregroundColor(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                         ? theme.textTertiary : JarvisTheme.accent)
+                    // Send
+                    Button(action: sendQuickCommand) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 26))
+                            .foregroundColor(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                             ? theme.textTertiary : JarvisTheme.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isProcessing)
+                    .transition(.scale(scale: 0.5).combined(with: .opacity))
                 }
-                .buttonStyle(.plain)
-                .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isProcessing)
-                .transition(.scale(scale: 0.5).combined(with: .opacity))
 
                 // Collapse
                 Button(action: {
+                    if speech.isRecording { speech.stop() }
+                    isVoiceActive = false
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         isExpanded = false
                         inputText = ""
@@ -293,7 +306,9 @@ struct AICommandBar: View {
             speech.stop()
             if !speech.transcript.isEmpty {
                 inputText = speech.transcript
+                sendQuickCommand()
             }
+            isVoiceActive = false
         } else {
             isVoiceActive = true
             if !isExpanded {
@@ -319,7 +334,7 @@ struct AICommandBar: View {
 
             if let actions = response.actions, !actions.isEmpty {
                 let executor = VoiceCommandExecutor()
-                _ = executor.execute(actions: actions)
+                _ = await executor.execute(actions: actions)
             }
 
             let preview = String(response.response.prefix(300))

@@ -20,7 +20,7 @@ final class NotificationManager: NSObject, ObservableObject {
                 let settings = await UNUserNotificationCenter.current().notificationSettings()
                 isAuthorized = settings.authorizationStatus == .authorized
             } catch {
-                print("Notification authorization failed: \(error)")
+                Logger.shared.error("Notification authorization failed: \(error.localizedDescription)")
             }
         }
     }
@@ -35,11 +35,23 @@ final class NotificationManager: NSObject, ObservableObject {
             let content = UNMutableNotificationContent()
             content.title = task.title
             content.body = task.notes.isEmpty ? L10n.notificationReminder : task.notes
-            content.sound = .default
+            
+            // Use user-selected notification sound
+            let soundChoice = NotificationSoundChoice(
+                rawValue: UserDefaults.standard.string(forKey: "jarvis_notification_sound_choice") ?? "default"
+            ) ?? .default
+            if let sound = soundChoice.notificationSound {
+                content.sound = sound
+            }
+            
             content.userInfo = ["taskID": task.id.uuidString]
             
             // Schedule notification 15 minutes before task time
             let reminderDate = task.date.addingTimeInterval(-15 * 60)
+            guard reminderDate > Date() else {
+                Logger.shared.debug("Skipped notification for past task: \(task.title)")
+                return
+            }
             let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: reminderDate)
             let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
             let request = UNNotificationRequest(identifier: task.id.uuidString, content: content, trigger: trigger)

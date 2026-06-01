@@ -22,11 +22,11 @@ final class VoiceCommandExecutor: ObservableObject {
     
     /// Выполняет массив AIAction, возвращает лог выполненных операций.
     @discardableResult
-    func execute(actions: [AIAction]) -> [String] {
+    func execute(actions: [AIAction]) async -> [String] {
         var log: [String] = []
         
         for action in actions {
-            let result = executeSingle(action)
+            let result = await executeSingle(action)
             log.append(result)
         }
         
@@ -35,11 +35,11 @@ final class VoiceCommandExecutor: ObservableObject {
     }
     
     /// Выполняет полный AICommandResponse — actions + возвращает текст ответа с логом.
-    func executeResponse(_ response: AICommandResponse) -> String {
+    func executeResponse(_ response: AICommandResponse) async -> String {
         var text = response.response
         
         if let actions = response.actions, !actions.isEmpty {
-            let log = execute(actions: actions)
+            let log = await execute(actions: actions)
             let logText = log.joined(separator: "\n")
             if !logText.isEmpty {
                 text += "\n\n" + logText
@@ -51,7 +51,7 @@ final class VoiceCommandExecutor: ObservableObject {
     
     // MARK: - Single action execution
     
-    private func executeSingle(_ action: AIAction) -> String {
+    private func executeSingle(_ action: AIAction) async -> String {
         switch action.type {
         case "create_task":
             return executeCreateTask(action.params)
@@ -64,7 +64,13 @@ final class VoiceCommandExecutor: ObservableObject {
         case "move_task":
             return executeMoveTask(action.params)
         case "create_event":
-            return L10n.voiceEventCreated
+            return await executeCreateEvent(action.params)
+        case "delete_event":
+            return await executeDeleteEvent(action.params)
+        case "reschedule_event":
+            return await executeRescheduleEvent(action.params)
+        case "find_free_slots":
+            return executeFindFreeSlots(action.params)
         case "send_email":
             return L10n.voiceEmailSent
         case "show_calendar":
@@ -200,6 +206,142 @@ final class VoiceCommandExecutor: ObservableObject {
         return L10n.voiceTaskMoved(task.title, sectionDisplayName(section))
     }
     
+    // MARK: - Calendar Event operations
+    
+    private func executeCreateEvent(_ params: [String: String]) async -> String {
+        let title = params["title"] ?? "Новое событие"
+        let notes = params["notes"]
+        
+        var startDate = Date()
+        if let dateStr = params["date"] {
+            startDate = parseDate(dateStr) ?? Date()
+        }
+        
+        var endDate: Date
+        if let endStr = params["end_date"], let parsed = parseDate(endStr) {
+            endDate = parsed
+        } else {
+            // Default 1 hour duration
+            endDate = calendar.date(byAdding: .hour, value: 1, to: startDate) ?? startDate
+        }
+        
+        let eventKit = EventKitService.shared
+        if !eventKit.calendarAccessGranted {
+            let granted = await eventKit.requestCalendarAccess()
+            guard granted else {
+                return "❌ Нет доступа к календарю. Разрешите доступ в Системных настройках → Конфиденциальность → Календарь."
+            }
+        }
+        
+        var combinedNotes = notes ?? ""
+        if let location = params["location"], !location.isEmpty {
+            combinedNotes = combinedNotes.isEmpty ? "📍 \(location)" : "📍 \(location)\n\(combinedNotes)"
+        }
+        
+        let success = eventKit.createEvent(
+            title: title,
+            startDate: startDate,
+            endDate: endDate,
+            notes: combinedNotes.isEmpty ? nil : combinedNotes
+        )
+        
+        if success {
+            triggerHaptic(.success)
+            let timeStr = startDate.formatted(date: .abbreviated, time: .shortened)
+            return "✅ Событие «\(title)» создано на \(timeStr)"
+        } else {
+            return "❌ Не удалось создать событие в календаре."
+        }
+    }
+    
+    private func executeDeleteEvent(_ params: [String: String]) async -> String {
+        guard let searchTitle = params["title"]?.lowercased() else {
+            return "❌ Не указано название события для удаления."
+        }
+        
+        let eventKit = EventKitService.shared
+        if !eventKit.calendarAccessGranted {
+            let granted = await eventKit.requestCalendarAccess()
+            guard granted else { return "❌ Нет доступа к календарю." }
+        }
+        
+        // Ensure events are loaded
+        if eventKit.systemEvents.isEmpty {
+            await eventKit.fetchEvents(for: Date())
+        }
+        
+        let events = eventKit.systemEvents
+        guard let match = events.first(where: { $0.title.lowercased().contains(searchTitle) }) else {
+            return "❌ Событие «\(searchTitle)» не найдено в календаре."
+        }
+        
+        if eventKit.deleteEvent(identifier: match.id) {
+            triggerHaptic(.warning)
+            return "🗑 Событие «\(match.title)» удалено из календаря."
+        }
+        return "❌ Не удалось удалить событие из календаря."
+    }
+    
+    private func executeRescheduleEvent(_ params: [String: String]) async -> String {
+        guard let searchTitle = params["title"]?.lowercased() else {
+            return "❌ Не указано название события для переноса."
+        }
+        guard let newDateStr = params["new_date"], let newDate = parseDate(newDateStr) else {
+            return "❌ Не указана новая дата."
+        }
+        
+        let eventKit = EventKitService.shared
+        if !eventKit.calendarAccessGranted {
+            let granted = await eventKit.requestCalendarAccess()
+            guard granted else { return "❌ Нет доступа к календарю." }
+        }
+        
+        // Ensure events are loaded
+        if eventKit.systemEvents.isEmpty {
+            await eventKit.fetchEvents(for: Date())
+        }
+        
+        let events = eventKit.systemEvents
+        guard let match = events.first(where: { $0.title.lowercased().contains(searchTitle) }) else {
+            return "❌ Событие «\(searchTitle)» не найдено в календаре."
+        }
+        
+        // Calculate duration from original event
+        let duration = match.endDate.timeIntervalSince(match.startDate)
+        let newEndDate: Date
+        if let endStr = params["new_end_date"], let parsed = parseDate(endStr) {
+            newEndDate = parsed
+        } else {
+            newEndDate = newDate.addingTimeInterval(duration)
+        }
+        
+        // Delete old → create new (EventKit doesn't expose edit from identifier alone)
+        let deleted = eventKit.deleteEvent(identifier: match.id)
+        if deleted {
+            let created = eventKit.createEvent(
+                title: match.title,
+                startDate: newDate,
+                endDate: newEndDate,
+                notes: match.notes
+            )
+            if created {
+                triggerHaptic(.success)
+                return "📅 Событие «\(match.title)» перенесено на \(newDate.formatted(date: .abbreviated, time: .shortened))"
+            }
+        }
+        return "❌ Не удалось перенести событие."
+    }
+    
+    private func executeFindFreeSlots(_ params: [String: String]) -> String {
+        let eventKit = EventKitService.shared
+        guard eventKit.calendarAccessGranted else {
+            return "❌ Нет доступа к календарю."
+        }
+        
+        // The LLM already has free slots in context, so this is a no-op action
+        return ""
+    }
+    
     // MARK: - Helpers
     
     /// Fuzzy search: exact match first, then contains, then Levenshtein.
@@ -238,13 +380,22 @@ final class VoiceCommandExecutor: ObservableObject {
     }
     
     private func parseDate(_ string: String) -> Date? {
-        // ISO8601
+        // ISO8601 with timezone
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let d = iso.date(from: string) { return d }
         
         iso.formatOptions = [.withInternetDateTime]
         if let d = iso.date(from: string) { return d }
+        
+        // ISO8601 without timezone — treat as LOCAL time
+        let localFormatter = DateFormatter()
+        localFormatter.locale = Locale(identifier: "en_US_POSIX")
+        localFormatter.timeZone = .current
+        for fmt in ["yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm"] {
+            localFormatter.dateFormat = fmt
+            if let d = localFormatter.date(from: string) { return d }
+        }
         
         // Date-only
         iso.formatOptions = [.withFullDate]

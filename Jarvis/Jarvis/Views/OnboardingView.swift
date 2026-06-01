@@ -34,7 +34,7 @@ struct OnboardingView: View {
     @State private var bedTime = Calendar.current.date(bySettingHour: 22, minute: 0, second: 0, of: Date()) ?? Date()
     @State private var acceptedTerms = false
     
-    private let totalPages = 6
+    private let totalPages = 7
     
     var body: some View {
         ZStack {
@@ -53,7 +53,8 @@ struct OnboardingView: View {
                     wakeUpPage.tag(2)
                     bedTimePage.tag(3)
                     planningPage.tag(4)
-                    readyPage.tag(5)
+                    modulesPage.tag(5)
+                    readyPage.tag(6)
                 }
                 #if os(iOS)
                 .tabViewStyle(.page(indexDisplayMode: .never))
@@ -433,7 +434,15 @@ struct OnboardingView: View {
         .padding(.bottom, 40)
     }
     
-    // MARK: - Page 6: Ready (What's up next?)
+    // MARK: - Page 6: Choose Modules
+    
+    private var modulesPage: some View {
+        OnboardingModuleSelectionView {
+            withAnimation { currentPage = 6 }
+        }
+    }
+    
+    // MARK: - Page 7: Ready (What's up next?)
     
     private var readyPage: some View {
         VStack(spacing: 0) {

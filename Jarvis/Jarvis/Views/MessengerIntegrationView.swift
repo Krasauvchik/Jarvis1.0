@@ -5,53 +5,33 @@ import Combine
 // MARK: - Messenger Service
 
 enum MessengerType: String, CaseIterable, Identifiable {
-    case whatsapp = "WhatsApp"
     case telegram = "Telegram"
     
     var id: String { rawValue }
     
     var icon: String {
-        switch self {
-        case .whatsapp: return "message.fill"
-        case .telegram: return "paperplane.fill"
-        }
+        return "paperplane.fill"
     }
     
     var color: Color {
-        switch self {
-        case .whatsapp: return Color(red: 0.07, green: 0.72, blue: 0.34) // #12B886
-        case .telegram: return Color(red: 0.16, green: 0.58, blue: 0.89) // #2A95E3
-        }
+        return Color(red: 0.16, green: 0.58, blue: 0.89) // #2A95E3
     }
     
     /// URL scheme to open the messenger app
     var appScheme: String {
-        switch self {
-        case .whatsapp: return "whatsapp://"
-        case .telegram: return "tg://"
-        }
+        return "tg://"
     }
     
     /// URL for sending a text message
     func sendURL(text: String) -> URL? {
         let encoded = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        switch self {
-        case .whatsapp:
-            return URL(string: "whatsapp://send?text=\(encoded)")
-        case .telegram:
-            return URL(string: "tg://msg?text=\(encoded)")
-        }
+        return URL(string: "tg://msg?text=\(encoded)")
     }
     
     /// Web fallback URL
     func webURL(text: String) -> URL? {
         let encoded = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        switch self {
-        case .whatsapp:
-            return URL(string: "https://wa.me/?text=\(encoded)")
-        case .telegram:
-            return URL(string: "https://t.me/share/url?text=\(encoded)")
-        }
+        return URL(string: "https://t.me/share/url?text=\(encoded)")
     }
 }
 

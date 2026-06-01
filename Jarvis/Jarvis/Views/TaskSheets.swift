@@ -117,7 +117,7 @@ struct AddTaskSheet: View {
                         )
                         .padding(.horizontal, 16)
 
-                        attachmentsSection
+                        AttachmentsSection(theme: theme, attachments: $attachments, showFileImporter: $showFileImporter)
                     }
                     .padding(.top, 16)
                 }
@@ -146,7 +146,7 @@ struct AddTaskSheet: View {
         }
         .presentationDetents([.large])
         .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.item]) { result in
-            handleFileImport(result: result)
+            AttachmentManager.handleFileImport(result: result, attachments: &attachments)
         }
     }
     
@@ -154,112 +154,6 @@ struct AddTaskSheet: View {
     
     private var taskColor: Color {
         JarvisTheme.taskColors[colorIndex % JarvisTheme.taskColors.count]
-    }
-
-    private var attachmentsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(L10n.attachmentsTitle)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.textSecondary)
-                Spacer()
-                Button {
-                    showFileImporter = true
-                } label: {
-                    Image(systemName: "paperclip")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(JarvisTheme.accent)
-                }
-                .buttonStyle(.plain)
-                .bounceOnTap()
-            }
-
-            if attachments.isEmpty {
-                Text(L10n.noAttachments)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.textTertiary)
-            } else {
-                ForEach(attachments, id: \.id) { attachment in
-                    HStack(spacing: 8) {
-                        Image(systemName: attachment.type == .image ? "photo" : "doc")
-                            .font(.system(size: 14))
-                            .foregroundColor(JarvisTheme.accent)
-                        Text(attachment.fileName)
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.textPrimary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Spacer()
-                        Button {
-                            attachments.removeAll { $0.id == attachment.id }
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 14))
-                                .foregroundColor(theme.textTertiary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.vertical, 4)
-                }
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-        )
-        .padding(.horizontal, 16)
-    }
-
-    private func handleFileImport(result: Result<URL, Error>) {
-        switch result {
-        case .failure(let error):
-            Logger.shared.error("File import failed: \(error.localizedDescription)")
-        case .success(let url):
-            addAttachment(from: url)
-        }
-    }
-
-    private func addAttachment(from url: URL) {
-        let fileManager = FileManager.default
-        let docsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first
-        guard let baseURL = docsURL else { return }
-
-        let attachmentsDir = baseURL.appendingPathComponent("TaskAttachments", isDirectory: true)
-        if !fileManager.fileExists(atPath: attachmentsDir.path) {
-            try? fileManager.createDirectory(at: attachmentsDir, withIntermediateDirectories: true)
-        }
-
-        let destinationURL = attachmentsDir.appendingPathComponent("\(UUID().uuidString)_\(url.lastPathComponent)")
-        do {
-            if url.startAccessingSecurityScopedResource() {
-                defer { url.stopAccessingSecurityScopedResource() }
-                if fileManager.fileExists(atPath: destinationURL.path) {
-                    try? fileManager.removeItem(at: destinationURL)
-                }
-                try fileManager.copyItem(at: url, to: destinationURL)
-            } else {
-                if fileManager.fileExists(atPath: destinationURL.path) {
-                    try? fileManager.removeItem(at: destinationURL)
-                }
-                try fileManager.copyItem(at: url, to: destinationURL)
-            }
-        } catch {
-            Logger.shared.error("Failed to copy attachment: \(error.localizedDescription)")
-        }
-
-        let resourceValues = try? destinationURL.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey])
-        let isImage = resourceValues?.contentType?.conforms(to: .image) ?? false
-        let type: TaskAttachment.AttachmentType = isImage ? .image : .file
-        let size = resourceValues?.fileSize.map { Int64($0) }
-
-        let attachment = TaskAttachment(
-            type: type,
-            fileName: url.lastPathComponent,
-            filePath: destinationURL.path,
-            fileSize: size
-        )
-        attachments.append(attachment)
     }
     
     private func addAndDismiss() {
@@ -476,6 +370,7 @@ struct EditTaskSheet: View {
     @State private var showIconPicker = false
     @State private var attachments: [TaskAttachment]
     @State private var showFileImporter = false
+    @State private var showBriefingSheet = false
 
     init(task: PlannerTask, theme: JarvisTheme) {
         self.task = task
@@ -501,16 +396,11 @@ struct EditTaskSheet: View {
     }
     
     private var durationText: String {
-        if duration >= 60 && duration % 60 == 0 {
-            return "\(duration / 60)h"
-        } else if duration >= 60 {
-            return "\(duration / 60)h \(duration % 60)m"
-        }
-        return "\(duration)m"
+        DurationFormatter.format(duration)
     }
     
     private var locationLabel: String {
-        if isInbox { return "Inbox" }
+        if isInbox { return L10n.tabInbox }
         if isCompleted { return L10n.completed }
         return L10n.statusScheduled
     }
@@ -651,6 +541,50 @@ struct EditTaskSheet: View {
                     )
                     .padding(.horizontal, 16)
                     
+                    // Meeting briefing (for calendar events)
+                    if task.source == .calendar || task.calendarEventId != nil {
+                        Button {
+                            showBriefingSheet = true
+                        } label: {
+                            HStack(spacing: 12) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .fill(JarvisTheme.accent.opacity(0.15))
+                                        .frame(width: 40, height: 40)
+                                    Image(systemName: "doc.text.magnifyingglass")
+                                        .font(.system(size: 18))
+                                        .foregroundColor(JarvisTheme.accent)
+                                }
+                                
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Выдержка по встрече")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(theme.textPrimary)
+                                    Text("Почта, мессенджеры, связанные задачи")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(theme.textSecondary)
+                                }
+                                
+                                Spacer()
+                                
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(theme.textTertiary)
+                            }
+                            .padding(14)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(theme.cardBackground)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .strokeBorder(JarvisTheme.accent.opacity(0.3), lineWidth: 1)
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 16)
+                    }
+                    
                     // Date / Time buttons
                     if !isInbox {
                         HStack(spacing: 12) {
@@ -744,7 +678,7 @@ struct EditTaskSheet: View {
                     )
                     .padding(.horizontal, 16)
 
-                    attachmentsSection
+                    AttachmentsSection(theme: theme, attachments: $attachments, showFileImporter: $showFileImporter)
                     
                     // Color picker (expandable)
                     if showColorPicker {
@@ -879,115 +813,11 @@ struct EditTaskSheet: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .presentationDetents([.large])
         .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.item]) { result in
-            handleFileImport(result: result)
+            AttachmentManager.handleFileImport(result: result, attachments: &attachments)
         }
-    }
-    
-    // MARK: - Attachments
-    
-    private var attachmentsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(L10n.attachmentsTitle)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.textSecondary)
-                Spacer()
-                Button {
-                    showFileImporter = true
-                } label: {
-                    Image(systemName: "paperclip")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(JarvisTheme.accent)
-                }
-                .buttonStyle(.plain)
-            }
-
-            if attachments.isEmpty {
-                Text(L10n.noAttachments)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.textTertiary)
-            } else {
-                ForEach(attachments, id: \.id) { attachment in
-                    HStack(spacing: 8) {
-                        Image(systemName: attachment.type == .image ? "photo" : "doc")
-                            .font(.system(size: 14))
-                            .foregroundColor(JarvisTheme.accent)
-                        Text(attachment.fileName)
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.textPrimary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Spacer()
-                        Button {
-                            attachments.removeAll { $0.id == attachment.id }
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 14))
-                                .foregroundColor(theme.textTertiary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.vertical, 4)
-                }
-            }
+        .sheet(isPresented: $showBriefingSheet) {
+            TaskBriefingSheet(task: task, theme: theme)
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-        )
-        .padding(.horizontal, 16)
-    }
-
-    private func handleFileImport(result: Result<URL, Error>) {
-        switch result {
-        case .failure(let error):
-            Logger.shared.error("File import failed: \(error.localizedDescription)")
-        case .success(let url):
-            addAttachment(from: url)
-        }
-    }
-
-    private func addAttachment(from url: URL) {
-        let fileManager = FileManager.default
-        let docsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first
-        guard let baseURL = docsURL else { return }
-
-        let attachmentsDir = baseURL.appendingPathComponent("TaskAttachments", isDirectory: true)
-        if !fileManager.fileExists(atPath: attachmentsDir.path) {
-            try? fileManager.createDirectory(at: attachmentsDir, withIntermediateDirectories: true)
-        }
-
-        let destinationURL = attachmentsDir.appendingPathComponent("\(UUID().uuidString)_\(url.lastPathComponent)")
-        do {
-            if url.startAccessingSecurityScopedResource() {
-                defer { url.stopAccessingSecurityScopedResource() }
-                if fileManager.fileExists(atPath: destinationURL.path) {
-                    try? fileManager.removeItem(at: destinationURL)
-                }
-                try fileManager.copyItem(at: url, to: destinationURL)
-            } else {
-                if fileManager.fileExists(atPath: destinationURL.path) {
-                    try? fileManager.removeItem(at: destinationURL)
-                }
-                try fileManager.copyItem(at: url, to: destinationURL)
-            }
-        } catch {
-            Logger.shared.error("Failed to copy attachment: \(error.localizedDescription)")
-        }
-
-        let resourceValues = try? destinationURL.resourceValues(forKeys: [.contentTypeKey, .fileSizeKey])
-        let isImage = resourceValues?.contentType?.conforms(to: .image) ?? false
-        let type: TaskAttachment.AttachmentType = isImage ? .image : .file
-        let size = resourceValues?.fileSize.map { Int64($0) }
-
-        let attachment = TaskAttachment(
-            type: type,
-            fileName: url.lastPathComponent,
-            filePath: destinationURL.path,
-            fileSize: size
-        )
-        attachments.append(attachment)
     }
     
     private func saveAndDismiss() {
@@ -1014,6 +844,205 @@ struct EditTaskSheet: View {
         }
         CalendarSyncService.shared.addOrUpdateEvent(for: updated)
         dismiss()
+    }
+}
+
+// MARK: - Task Briefing Sheet (for calendar-sourced tasks)
+
+private struct TaskBriefingSheet: View {
+    let task: PlannerTask
+    let theme: JarvisTheme
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var briefingService = MeetingBriefingService.shared
+    @State private var briefing: MeetingBriefingService.MeetingBriefing?
+    @State private var isLoading = false
+    
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Task header
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(task.title)
+                            .font(.title3.bold())
+                            .foregroundColor(theme.textPrimary)
+                        
+                        HStack(spacing: 8) {
+                            Label(task.date.formatted(date: .abbreviated, time: .shortened), systemImage: "calendar")
+                                .font(.subheadline)
+                                .foregroundColor(theme.textSecondary)
+                            
+                            Label("из календаря", systemImage: "arrow.right.circle")
+                                .font(.caption)
+                                .foregroundColor(JarvisTheme.accent)
+                        }
+                    }
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(theme.cardBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    
+                    Divider()
+                    
+                    if isLoading {
+                        VStack(spacing: 16) {
+                            ProgressView()
+                                .controlSize(.large)
+                            Text("Ищу информацию в почте и мессенджерах...")
+                                .font(.subheadline)
+                                .foregroundColor(theme.textSecondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 40)
+                    } else if let briefing {
+                        briefingContent(briefing)
+                    } else {
+                        VStack(spacing: 16) {
+                            Image(systemName: "doc.text.magnifyingglass")
+                                .font(.system(size: 40))
+                                .foregroundColor(JarvisTheme.accent)
+                            
+                            Text("Подготовить выдержку?")
+                                .font(.headline)
+                                .foregroundColor(theme.textPrimary)
+                            
+                            Text("Анализ почты, мессенджеров и задач по этой встрече")
+                                .font(.subheadline)
+                                .foregroundColor(theme.textSecondary)
+                                .multilineTextAlignment(.center)
+                            
+                            Button {
+                                loadBriefing()
+                            } label: {
+                                Label("Сгенерировать", systemImage: "sparkles")
+                                    .font(.headline)
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 24)
+                                    .padding(.vertical, 12)
+                                    .background(JarvisTheme.accent)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 20)
+                    }
+                }
+                .padding()
+            }
+            .background(theme.background)
+            .navigationTitle("📋 Выдержка")
+            #if !os(macOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(L10n.close) { dismiss() }
+                }
+                if briefing != nil {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button { briefing = nil; loadBriefing() } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                }
+            }
+            .task {
+                if let cached = briefingService.cachedBriefing(for: task.title, date: task.date) {
+                    briefing = cached
+                } else {
+                    loadBriefing()
+                }
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private func briefingContent(_ b: MeetingBriefingService.MeetingBriefing) -> some View {
+        // Stats
+        HStack(spacing: 16) {
+            statBadge(icon: "envelope", count: b.relatedEmails, label: "писем")
+            statBadge(icon: "bubble.left.and.bubble.right", count: b.relatedMessages, label: "сообщений")
+            statBadge(icon: "checklist", count: b.relatedTasks, label: "задач")
+        }
+        .padding()
+        .background(theme.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        
+        if !b.keyTopics.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Ключевые темы", systemImage: "key")
+                    .font(.subheadline.bold())
+                    .foregroundColor(theme.textPrimary)
+                ForEach(b.keyTopics, id: \.self) { topic in
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("•").foregroundColor(JarvisTheme.accent)
+                        Text(topic).font(.subheadline).foregroundColor(theme.textSecondary)
+                    }
+                }
+            }
+            .padding()
+            .background(theme.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+        
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Выдержка", systemImage: "doc.text")
+                .font(.subheadline.bold())
+                .foregroundColor(theme.textPrimary)
+            Text(b.structuredSummary)
+                .font(.subheadline)
+                .foregroundColor(theme.textSecondary)
+        }
+        .padding()
+        .background(theme.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        
+        if !b.actionItems.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Нужно подготовить", systemImage: "bolt")
+                    .font(.subheadline.bold())
+                    .foregroundColor(JarvisTheme.accentOrange)
+                ForEach(b.actionItems, id: \.self) { item in
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("⚡")
+                        Text(item).font(.subheadline).foregroundColor(theme.textSecondary)
+                    }
+                }
+            }
+            .padding()
+            .background(theme.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+        
+        Text("Сгенерировано: \(b.generatedAt.formatted(date: .abbreviated, time: .shortened))")
+            .font(.caption2)
+            .foregroundColor(theme.textTertiary)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+    
+    private func statBadge(icon: String, count: Int, label: String) -> some View {
+        VStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.title3)
+                .foregroundColor(count > 0 ? JarvisTheme.accent : theme.textTertiary)
+            Text("\(count)")
+                .font(.headline)
+                .foregroundColor(count > 0 ? theme.textPrimary : theme.textTertiary)
+            Text(label)
+                .font(.caption2)
+                .foregroundColor(theme.textTertiary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+    
+    private func loadBriefing() {
+        isLoading = true
+        Task {
+            let result = await briefingService.generateBriefing(for: task, allTasks: PlannerStore.shared.tasks)
+            isLoading = false
+            briefing = result
+        }
     }
 }
 
