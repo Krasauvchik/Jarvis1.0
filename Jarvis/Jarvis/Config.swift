@@ -8,7 +8,9 @@ enum Config: Sendable {
     #if DEBUG
     private static let defaultBackendBase = "http://localhost:8000"
     #else
-    private static let defaultBackendBase = "https://158.160.48.202:8000"
+    // Production: domain with a valid TLS certificate (terminated by Caddy on :443).
+    // Strict ATS requires a real cert — do not point this at a raw IP / self-signed host.
+    private static let defaultBackendBase = "https://jarvis-app.mooo.com"
     #endif
     
     /// Current backend base URL (reads user override from UserDefaults).
