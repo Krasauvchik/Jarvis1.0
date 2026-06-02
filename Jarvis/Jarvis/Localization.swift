@@ -517,6 +517,7 @@ enum L10n {
     static var save: String { _s("save") }
     static var subtasks: String { _s("subtasks") }
     static var addSubtask: String { _s("add_subtask") }
+    static var aiBreakdownSubtasks: String { _s("ai_breakdown_subtasks") }
     
     // MARK: - Messenger Settings
     static var messengersTitle: String { _s("messengers_title") }

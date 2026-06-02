@@ -76,7 +76,54 @@ struct JarvisWidgetEntryView: View {
     var entry: JarvisWidgetEntry
     @Environment(\.widgetFamily) var family
 
+    private var todayURL: URL { URL(string: "jarvis://today") ?? URL(fileURLWithPath: "/") }
+    private var nextTask: WidgetTaskSnapshot? { entry.tasks.first }
+
     var body: some View {
+        switch family {
+        #if !os(macOS)
+        case .accessoryInline:
+            // Lock Screen inline: "3 · 14:30 Standup"
+            if let t = nextTask {
+                Text("\(entry.tasks.count) · \(t.date, style: .time) \(t.title)")
+            } else {
+                Text("Нет задач")
+            }
+        case .accessoryCircular:
+            // Lock Screen circular: count of today's tasks
+            ZStack {
+                AccessoryWidgetBackground()
+                VStack(spacing: 0) {
+                    Image(systemName: "checklist")
+                        .font(.system(size: 12))
+                    Text("\(entry.tasks.count)")
+                        .font(.system(size: 16, weight: .bold))
+                }
+            }
+            .widgetURL(todayURL)
+        case .accessoryRectangular:
+            // Lock Screen rectangular: next task + count
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.tasks.isEmpty ? "Сегодня" : "Сегодня · \(entry.tasks.count)")
+                    .font(.headline)
+                    .widgetAccentable()
+                if let t = nextTask {
+                    Text("\(t.date, style: .time)  \(t.title)")
+                        .font(.subheadline)
+                        .lineLimit(1)
+                } else {
+                    Text("Нет задач на сегодня")
+                        .font(.subheadline)
+                }
+            }
+            .widgetURL(todayURL)
+        #endif
+        default:
+            homeScreenBody
+        }
+    }
+
+    private var homeScreenBody: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(entry.title)
@@ -91,7 +138,7 @@ struct JarvisWidgetEntryView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             } else {
                 ForEach(entry.tasks.prefix(family == .systemMedium ? 5 : 3), id: \.id) { task in
-                    Link(destination: URL(string: "jarvis://task/\(task.id.uuidString)")!) {
+                    Link(destination: URL(string: "jarvis://task/\(task.id.uuidString)") ?? todayURL) {
                         HStack(spacing: 8) {
                             Circle()
                                 .fill(widgetColors[task.colorIndex % widgetColors.count])
@@ -112,7 +159,7 @@ struct JarvisWidgetEntryView: View {
             }
         }
         .padding()
-        .widgetURL(URL(string: "jarvis://today")!)
+        .widgetURL(todayURL)
     }
 }
 
@@ -127,7 +174,16 @@ struct JarvisWidget: Widget {
         }
         .configurationDisplayName("Jarvis")
         .description("Задачи на сегодня")
-        .supportedFamilies([.systemSmall, .systemMedium])
+        .supportedFamilies(Self.families)
+    }
+
+    private static var families: [WidgetFamily] {
+        #if os(macOS)
+        return [.systemSmall, .systemMedium]
+        #else
+        return [.systemSmall, .systemMedium,
+                .accessoryInline, .accessoryCircular, .accessoryRectangular]
+        #endif
     }
 }
 

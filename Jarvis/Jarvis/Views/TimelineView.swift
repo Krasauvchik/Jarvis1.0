@@ -45,6 +45,7 @@ struct TimelinePanelView: View {
     /// Показываем целевое время при перетаскивании (Day view)
     @State private var dragTargetTimeLabel: String?
     @State private var dragTargetY: CGFloat = 0
+    @State private var lastSnappedMinutes: Int = -1   // for snap haptic during drag
     
     var body: some View {
         VStack(spacing: 0) {
@@ -374,6 +375,10 @@ struct TimelinePanelView: View {
                                     let snapped = max(0, min(24 * 60 - 1, Int(round(totalMinutes / 15.0) * 15.0)))
                                     let targetH = snapped / 60
                                     let targetM = snapped % 60
+                                    if snapped != lastSnappedMinutes {
+                                        lastSnappedMinutes = snapped
+                                        HapticManager.shared.selection()  // tick on each 15-min slot
+                                    }
                                     dragTargetTimeLabel = String(format: "%02d:%02d", targetH, targetM)
                                     
                                     // Position for the label
@@ -394,9 +399,11 @@ struct TimelinePanelView: View {
                                 withAnimation(.easeOut(duration: 0.25)) {
                                     moveTaskToDateAndTime(taskID: task.id, date: selectedDate, hour: newHour, minute: newMinute)
                                 }
+                                HapticManager.shared.impact(.medium)  // confirm drop
                                 timelineDraggingTaskId = nil
                                 timelineDragOffset = .zero
                                 dragTargetTimeLabel = nil
+                                lastSnappedMinutes = -1
                             }
                     )
                     .draggable(task.id.uuidString) {

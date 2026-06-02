@@ -50,9 +50,10 @@
 | Привычки, канбан, проекты, теги | ✅ (шире Structured) | соответствующие Views |
 | Бэкап / экспорт-импорт | ✅ | `ExportImport.swift` |
 | **Structured AI: авто-план дня** | ✅ реализовано (intent `.planDay`, чип «План дня») | `AIManager.handlePlanDay` |
-| **Structured AI: разбивка крупной задачи** | 🟡 есть общий AI, нет спец-флоу | реализовать |
-| Подписка/монетизация (StoreKit 2) | ❌ заглушка | реализовать |
-| Lock Screen / accessory-виджеты | ❌ | реализовать |
+| **Structured AI: разбивка крупной задачи** | ✅ кнопка «Разбить с ИИ» в TaskDetail | `AIManager.breakdownTask`, `Views/TaskDetailView.swift` |
+| Подписка/монетизация (StoreKit 2) | ❌ заглушка | реализовать (нужен App Store Connect) |
+| Lock Screen / accessory-виджеты | 🟡 вью готовы, нужен target в Xcode | `JarvisWidgetExtension/JarvisWidget.swift` |
+| Хаптика при перетаскивании в таймлайне | ✅ тик по слотам + подтверждение | `Views/TimelineView.swift` |
 
 **Итог:** Jarvis уже на ~85% паритета и шире по охвату. Реальные пробелы — ниже.
 

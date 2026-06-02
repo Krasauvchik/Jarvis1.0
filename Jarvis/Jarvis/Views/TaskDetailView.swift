@@ -13,6 +13,8 @@ struct TaskDetailView: View {
     @State private var logMinutes = 0
     @State private var showAddSubtask = false
     @State private var newSubtaskTitle = ""
+    @State private var isBreakingDown = false
+    @ObservedObject private var aiManager = DependencyContainer.shared.aiManager
     
     private var theme: JarvisTheme {
         JarvisTheme.current(for: ThemeManager.shared.currentTheme.colorScheme ?? .light)
@@ -133,7 +135,20 @@ struct TaskDetailView: View {
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.textTertiary)
                 }
-                
+
+                // AI breakdown — split the task into subtasks
+                Button { breakdownWithAI() } label: {
+                    if isBreakingDown {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "wand.and.stars")
+                            .foregroundColor(JarvisTheme.accentPurple)
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(isBreakingDown)
+                .help(L10n.aiBreakdownSubtasks)
+
                 Button { showAddSubtask.toggle() } label: {
                     Image(systemName: "plus.circle.fill")
                         .foregroundColor(JarvisTheme.accent)
@@ -234,7 +249,35 @@ struct TaskDetailView: View {
         store.add(sub)
         newSubtaskTitle = ""
     }
-    
+
+    /// Asks the AI to split this task into subtasks and adds the ones that don't already exist.
+    private func breakdownWithAI() {
+        guard !isBreakingDown else { return }
+        isBreakingDown = true
+        let parentTitle = task.title
+        let parentNotes = task.notes
+        Task {
+            let titles = await aiManager.breakdownTask(title: parentTitle, notes: parentNotes)
+            await MainActor.run {
+                let existing = Set(subtasks.map { $0.title.lowercased() })
+                for title in titles where !existing.contains(title.lowercased()) {
+                    let sub = PlannerTask(
+                        title: title,
+                        date: task.date,
+                        durationMinutes: 15,
+                        colorIndex: task.colorIndex,
+                        icon: "circle",
+                        categoryId: task.categoryId,
+                        priority: task.priority,
+                        parentTaskId: task.id
+                    )
+                    store.add(sub)
+                }
+                isBreakingDown = false
+            }
+        }
+    }
+
     // MARK: - Time Tracking
     
     private var timeTrackingSection: some View {

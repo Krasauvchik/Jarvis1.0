@@ -625,6 +625,39 @@ final class AIManager: ObservableObject {
         return AICommandResponse(response: "🗓 Распланировано задач: \(placed.count)\n\(lines)\(footer)", actions: nil)
     }
 
+    // MARK: - Task Breakdown (AI subtasks)
+
+    /// Разбивает задачу на 3–7 конкретных подзадач через ИИ. Возвращает список названий
+    /// (пустой, если ИИ недоступен/не справился). Используется в TaskDetailView.
+    func breakdownTask(title: String, notes: String = "") async -> [String] {
+        guard gemini.isConfigured else { return [] }
+        let systemPrompt = """
+        Разбей задачу пользователя на 3–7 конкретных, выполнимых подзадач (шагов).
+        Задача: \(title)
+        \(notes.isEmpty ? "" : "Детали: \(notes)")
+        Правила: каждая подзадача короткая (до 8 слов), начинается с глагола, на языке задачи.
+        Верни СТРОГО JSON-массив строк без пояснений и без markdown: ["Шаг 1", "Шаг 2"].
+        """
+        guard let text = await gemini.chat(
+            messages: [(role: "user", content: "Разбей задачу на подзадачи")],
+            systemPrompt: systemPrompt,
+            temperature: 0.4,
+            maxTokens: 600
+        ) else { return [] }
+
+        var cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.hasPrefix("```") {
+            cleaned = cleaned.replacingOccurrences(of: "```json", with: "")
+                .replacingOccurrences(of: "```", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard let data = cleaned.data(using: .utf8),
+              let arr = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return Array(arr.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .prefix(8))
+    }
+
     private func handleStandardCommand(message: String, tasks: [PlannerTask], date: Date) async -> AICommandResponse {
         // 0. Чисто эвристический режим или оффлайн без облака
         if selectedModel == .heuristic || (!NetworkMonitor.shared.isConnected && !selectedModel.isLocal) {
